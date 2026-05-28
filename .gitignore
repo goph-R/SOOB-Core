@@ -1,0 +1,11 @@
+# Win10 build - portable MinGW (download separately, ~250MB)
+vendor_win10/mingw32/
+vendor_win10/SDL.dll
+libwinpthread-1.dll
+
+# Editor / OS noise
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
