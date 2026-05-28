@@ -920,9 +920,14 @@ static void scriptSandbox(lua_State *L)
         lua_setglobal(L, banned[i]);
     }
 
-    /* Restrict require: search only scripts/?.lua, never look for C libs. */
+    /* Restrict require: look in the consuming game's ./scripts/ first,
+       then the engine's shared modules under ../SOOB-Core/scripts/.
+       Convention: engine modules live in `engine/` so consumers write
+       `require "engine.scene"`, sidestepping any name clash with the
+       game's own modules. Never look for C libs. */
     luaL_dostring(L,
-        "package.path = './scripts/?.lua;./scripts/?/init.lua'\n"
+        "package.path = './scripts/?.lua;./scripts/?/init.lua"
+                       ";../SOOB-Core/scripts/?.lua;../SOOB-Core/scripts/?/init.lua'\n"
         "package.cpath = ''\n"
         "package.loadlib = nil\n"
     );
