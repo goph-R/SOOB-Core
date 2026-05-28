@@ -18,6 +18,9 @@
 #include <GL/gl.h>
 #include <cstdio>
 #include <cstdlib>
+#include <math.h>   /* uiEllipse uses cosf / sinf — self-contained include keeps
+                       this working when newer libstdc++ defers <math.h> to
+                       <cmath> (which only puts symbols in std::). */
 #include <cstring>
 
 /* 128 glyphs × 8 rows × 1 byte. LSB = leftmost pixel. */

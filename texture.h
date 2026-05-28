@@ -10,6 +10,13 @@
 #define STBI_ONLY_PNG
 #define STBI_NO_STDIO_THREAD_SAFE
 #define STBI_NO_THREAD_LOCALS
+/* Skip HDR/linear conversion paths: we only load PNGs so the
+   stbi__ldr_to_hdr / stbi__hdr_to_ldr functions are unused. Their bodies
+   call pow/ldexp, which can fail to resolve under newer libstdc++ where
+   <math.h> defers to <cmath> and only puts the symbols in std::. Cleaner
+   to drop the dead code than to fight the include order. */
+#define STBI_NO_HDR
+#define STBI_NO_LINEAR
 #include "vendor/stb/stb_image.h"
 
 #ifndef GL_CLAMP_TO_EDGE

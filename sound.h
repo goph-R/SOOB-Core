@@ -50,7 +50,7 @@
 #define STB_VORBIS_HEADER_ONLY
 #include "vendor/stb/stb_vorbis.c"
 
-#include "math.h"
+#include "engine_math.h"
 
 #define SND_NUM_SOURCES 16
 

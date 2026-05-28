@@ -1,5 +1,5 @@
-#ifndef SDLFUN_MATH_H
-#define SDLFUN_MATH_H
+#ifndef ENGINE_MATH_H
+#define ENGINE_MATH_H
 
 /* Shared math types for the engine. Just type definitions — no operator
    helpers yet. Tight inner loops (rasterizer, lightmap update) keep
