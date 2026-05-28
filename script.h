@@ -1094,6 +1094,10 @@ static void scr_onMusic(ScriptSystem *s, const char *name, const char *path)
 {
     musicLibAdd(s->musLib, name, path);
 }
+static void scr_onModel(ScriptSystem *s, const char *name, const char *path)
+{
+    assetRegAddModel(s->assets, name, path);
+}
 static void scr_onTexture(ScriptSystem *s, const char *name, const char *path)
 {
     assetRegAddTexture(s->assets, name, path);
@@ -1175,6 +1179,10 @@ static int scriptLoadAssets(ScriptSystem *s, const char *path)
     int music = scr_walkStringTable(L, s, scr_onMusic);
     lua_pop(L, 1);
 
+    lua_getfield(L, -1, "models");
+    int models = scr_walkStringTable(L, s, scr_onModel);
+    lua_pop(L, 1);
+
     lua_getfield(L, -1, "textures");
     int textures = scr_walkStringTable(L, s, scr_onTexture);
     lua_pop(L, 1);
@@ -1188,8 +1196,8 @@ static int scriptLoadAssets(ScriptSystem *s, const char *path)
     lua_pop(L, 1);
 
     lua_pop(L, 2);
-    conLogf("assets: %d sound(s), %d music, %d texture(s), %d font(s), %d region(s) registered from %s\n",
-           sounds, music, textures, fonts, regions, path);
+    conLogf("assets: %d sound(s), %d music, %d model(s), %d texture(s), %d font(s), %d region(s) registered from %s\n",
+           sounds, music, models, textures, fonts, regions, path);
     return 1;
 }
 
