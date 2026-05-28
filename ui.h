@@ -161,10 +161,13 @@ static const unsigned char ui_font8x8[128][8] = {
    via uiText's scale arg) appears roughly twice as large on screen. All
    layout constants in main.cpp / menu.h / console.h were halved at the
    same time to preserve their relative screen positions. */
-/* Find5's design target is 480p (4:3 game @ 640x480 reference). 480 virtual
-   units tall keeps source-pixel art mapping 1:1 to virtual units at the
-   reference resolution. */
+/* Default virtual canvas height: 480 (4:3 game @ 640x480 reference) keeps
+   source-pixel art mapping 1:1 at the reference resolution. Consumers
+   that ship at a different reference (e.g. SDLFun's 3D FPS uses 540 for
+   a more text-friendly HUD) override this define before including ui.h. */
+#ifndef UI_VIRTUAL_H
 #define UI_VIRTUAL_H 480.0f
+#endif
 
 struct UiRect  { float x, y, w, h; };
 struct UiColor { float r, g, b, a; };

@@ -39,6 +39,7 @@ struct ScriptSystem {
     AssetRegistry *assets;
     TexCache      *texCache;   /* shared cache for draw_sprite's lazy PNG loads */
     TexBlurCache  *blurCache;  /* downsampled color-summary textures (draw_blur) */
+    const char    *optFile;    /* persistence target, e.g. "find5.dat" — set by scriptInit */
 };
 
 /* ---- C bindings ---- */
@@ -46,7 +47,7 @@ struct ScriptSystem {
 /* ui_show_message(text [, seconds])  — seconds defaults to 3. */
 static int scr_ui_show_message(lua_State *L)
 {
-    lua_getfield(L, LUA_REGISTRYINDEX, "find5.sys");
+    lua_getfield(L, LUA_REGISTRYINDEX, "engine.sys");
     ScriptSystem *s = (ScriptSystem *)lua_touserdata(L, -1);
     lua_pop(L, 1);
 
@@ -60,7 +61,7 @@ static int scr_ui_show_message(lua_State *L)
    the name isn't registered. */
 static int scr_snd_play(lua_State *L)
 {
-    lua_getfield(L, LUA_REGISTRYINDEX, "find5.sys");
+    lua_getfield(L, LUA_REGISTRYINDEX, "engine.sys");
     ScriptSystem *s = (ScriptSystem *)lua_touserdata(L, -1);
     lua_pop(L, 1);
 
@@ -79,7 +80,7 @@ static int scr_snd_play(lua_State *L)
    Falls through to a raw path if the name isn't registered in musLib. */
 static int scr_music_play(lua_State *L)
 {
-    lua_getfield(L, LUA_REGISTRYINDEX, "find5.sys");
+    lua_getfield(L, LUA_REGISTRYINDEX, "engine.sys");
     ScriptSystem *s = (ScriptSystem *)lua_touserdata(L, -1);
     lua_pop(L, 1);
 
@@ -93,7 +94,7 @@ static int scr_music_play(lua_State *L)
 /* music_stop([fadeSec]) — fadeSec defaults to 0.5. */
 static int scr_music_stop(lua_State *L)
 {
-    lua_getfield(L, LUA_REGISTRYINDEX, "find5.sys");
+    lua_getfield(L, LUA_REGISTRYINDEX, "engine.sys");
     ScriptSystem *s = (ScriptSystem *)lua_touserdata(L, -1);
     lua_pop(L, 1);
 
@@ -105,7 +106,7 @@ static int scr_music_stop(lua_State *L)
 /* music_volume(g) — clamped to [0,1] inside musicSetVolume. */
 static int scr_music_volume(lua_State *L)
 {
-    lua_getfield(L, LUA_REGISTRYINDEX, "find5.sys");
+    lua_getfield(L, LUA_REGISTRYINDEX, "engine.sys");
     ScriptSystem *s = (ScriptSystem *)lua_touserdata(L, -1);
     lua_pop(L, 1);
 
@@ -148,7 +149,7 @@ static int scr_key_down(lua_State *L)
 /* mouse_pos() -> x, y  (virtual canvas coords) */
 static int scr_mouse_pos(lua_State *L)
 {
-    lua_getfield(L, LUA_REGISTRYINDEX, "find5.sys");
+    lua_getfield(L, LUA_REGISTRYINDEX, "engine.sys");
     ScriptSystem *s = (ScriptSystem *)lua_touserdata(L, -1);
     lua_pop(L, 1);
 
@@ -244,7 +245,7 @@ static void scr_optfield_color(lua_State *L, int idx,
  * inside uiBegin/uiEnd (i.e., on_render). */
 static int scr_draw_region(lua_State *L)
 {
-    lua_getfield(L, LUA_REGISTRYINDEX, "find5.sys");
+    lua_getfield(L, LUA_REGISTRYINDEX, "engine.sys");
     ScriptSystem *s = (ScriptSystem *)lua_touserdata(L, -1);
     lua_pop(L, 1);
 
@@ -368,7 +369,7 @@ static int scr_draw_region(lua_State *L)
  * the named font is unknown. Must be called from inside uiBegin/uiEnd. */
 static int scr_draw_text(lua_State *L)
 {
-    lua_getfield(L, LUA_REGISTRYINDEX, "find5.sys");
+    lua_getfield(L, LUA_REGISTRYINDEX, "engine.sys");
     ScriptSystem *s = (ScriptSystem *)lua_touserdata(L, -1);
     lua_pop(L, 1);
 
@@ -482,7 +483,7 @@ static int scr_draw_quad(lua_State *L)
  * of the 640×480 design rect (e.g. covering background math, edge HUD). */
 static int scr_view_size(lua_State *L)
 {
-    lua_getfield(L, LUA_REGISTRYINDEX, "find5.sys");
+    lua_getfield(L, LUA_REGISTRYINDEX, "engine.sys");
     ScriptSystem *s = (ScriptSystem *)lua_touserdata(L, -1);
     lua_pop(L, 1);
     lua_pushnumber(L, uiGetWidth(s->ui));
@@ -500,7 +501,7 @@ static int scr_view_size(lua_State *L)
  * draw_region at design-rect coords. */
 static int scr_draw_bg(lua_State *L)
 {
-    lua_getfield(L, LUA_REGISTRYINDEX, "find5.sys");
+    lua_getfield(L, LUA_REGISTRYINDEX, "engine.sys");
     ScriptSystem *s = (ScriptSystem *)lua_touserdata(L, -1);
     lua_pop(L, 1);
 
@@ -555,7 +556,7 @@ static int scr_draw_bg(lua_State *L)
  * (~ms even on Win98). Subsequent calls hit the blur cache. */
 static int scr_draw_blur(lua_State *L)
 {
-    lua_getfield(L, LUA_REGISTRYINDEX, "find5.sys");
+    lua_getfield(L, LUA_REGISTRYINDEX, "engine.sys");
     ScriptSystem *s = (ScriptSystem *)lua_touserdata(L, -1);
     lua_pop(L, 1);
 
@@ -602,38 +603,40 @@ static int scr_draw_blur(lua_State *L)
 
 /* ---- Options / persistence ----
  *
- * Key-value store backed by a single file `find5.dat` next to the exe.
- * Designed for forward compatibility: each opt_get carries its own default,
- * so adding/removing/renaming options across versions never breaks an
- * existing save file (orphan keys are quietly ignored, new keys fall back
- * to defaults).
+ * Key-value store backed by a single file next to the exe. Per-game
+ * filename, set by scriptInit's `optFile` arg (e.g. "find5.dat",
+ * "sdlfun.dat"). Designed for forward compatibility: each opt_get carries
+ * its own default, so adding / removing / renaming options across
+ * versions never breaks an existing save file (orphan keys are quietly
+ * ignored, new keys fall back to defaults).
  *
  * Lua API:
  *   opt_set(name, value)        value: string | number | boolean | table
  *                               pass nil to delete
  *   opt_get(name)               -> value, or nil
  *   opt_get(name, default)      -> default if unset
- *   opt_save()                  -> bool — writes find5.dat atomically
- *   opt_load()                  -> bool — re-reads find5.dat into memory
+ *   opt_save()                  -> bool — writes the file atomically
+ *   opt_load()                  -> bool — re-reads the file into memory
  *
  * Internally the option store is one Lua table in the registry under
- * "find5.opts". opt_load is called automatically at the end of scriptInit
+ * "engine.opts". opt_load is called automatically at the end of scriptInit
  * so options are ready before the entry script runs; you only need to
  * call it manually if you want to revert to the last-saved state. */
 
-#define OPT_FILE        "find5.dat"
-#define OPT_FILE_TMP    "find5.dat.tmp"
+/* Persistence filename is per-game — passed to scriptInit and stashed
+   in ScriptSystem::optFile. Functions that need the .tmp variant
+   build it locally with snprintf to avoid heap churn. */
 #define OPT_MAX_DEPTH   16
 
 /* Push the options table; create + register if it doesn't exist yet. */
 static void opt_pushTable(lua_State *L)
 {
-    lua_getfield(L, LUA_REGISTRYINDEX, "find5.opts");
+    lua_getfield(L, LUA_REGISTRYINDEX, "engine.opts");
     if (!lua_istable(L, -1)) {
         lua_pop(L, 1);
         lua_newtable(L);
         lua_pushvalue(L, -1);
-        lua_setfield(L, LUA_REGISTRYINDEX, "find5.opts");
+        lua_setfield(L, LUA_REGISTRYINDEX, "engine.opts");
     }
 }
 
@@ -817,15 +820,23 @@ static int scr_opt_get(lua_State *L)
     return 1;
 }
 
-/* opt_save() -> bool. Writes the options table to find5.dat. Returns
+/* opt_save() -> bool. Writes the options table to s->optFile. Returns
    true on success, false (with conLogf message) on any failure. Atomic
    via write-to-tmp + rename, so a partial write can't leave a corrupt
    save file. */
 static int scr_opt_save(lua_State *L)
 {
-    FILE *f = fopen(OPT_FILE_TMP, "wb");
+    lua_getfield(L, LUA_REGISTRYINDEX, "engine.sys");
+    ScriptSystem *s = (ScriptSystem *)lua_touserdata(L, -1);
+    lua_pop(L, 1);
+
+    const char *optFile = s->optFile ? s->optFile : "options.dat";
+    char tmpFile[256];
+    snprintf(tmpFile, sizeof(tmpFile), "%s.tmp", optFile);
+
+    FILE *f = fopen(tmpFile, "wb");
     if (!f) {
-        conLogf("opt_save: cannot open %s for writing\n", OPT_FILE_TMP);
+        conLogf("opt_save: cannot open %s for writing\n", tmpFile);
         lua_pushboolean(L, 0);
         return 1;
     }
@@ -837,9 +848,9 @@ static int scr_opt_save(lua_State *L)
     fclose(f);
 
     /* Windows rename() fails if the target already exists; remove first. */
-    remove(OPT_FILE);
-    if (rename(OPT_FILE_TMP, OPT_FILE) != 0) {
-        conLogf("opt_save: rename %s -> %s failed\n", OPT_FILE_TMP, OPT_FILE);
+    remove(optFile);
+    if (rename(tmpFile, optFile) != 0) {
+        conLogf("opt_save: rename %s -> %s failed\n", tmpFile, optFile);
         lua_pushboolean(L, 0);
         return 1;
     }
@@ -852,7 +863,12 @@ static int scr_opt_save(lua_State *L)
    any failure — but the registry always ends up holding a usable table. */
 static int opt_loadInternal(lua_State *L)
 {
-    if (luaL_loadfile(L, OPT_FILE) != 0) {
+    lua_getfield(L, LUA_REGISTRYINDEX, "engine.sys");
+    ScriptSystem *s = (ScriptSystem *)lua_touserdata(L, -1);
+    lua_pop(L, 1);
+    const char *optFile = s->optFile ? s->optFile : "options.dat";
+
+    if (luaL_loadfile(L, optFile) != 0) {
         /* File missing or unreadable — fine on first run. Quiet log. */
         conLogf("opt_load: %s (starting with empty options)\n", lua_tostring(L, -1));
         lua_pop(L, 1);
@@ -868,16 +884,16 @@ static int opt_loadInternal(lua_State *L)
         lua_pop(L, 1);
         goto resetEmpty;
     }
-    lua_setfield(L, LUA_REGISTRYINDEX, "find5.opts");
+    lua_setfield(L, LUA_REGISTRYINDEX, "engine.opts");
     return 1;
 
 resetEmpty:
     lua_newtable(L);
-    lua_setfield(L, LUA_REGISTRYINDEX, "find5.opts");
+    lua_setfield(L, LUA_REGISTRYINDEX, "engine.opts");
     return 0;
 }
 
-/* opt_load() -> bool. Re-reads find5.dat from disk into the options
+/* opt_load() -> bool. Re-reads s->optFile from disk into the options
    table. Useful to revert in-memory edits to the last saved state. */
 static int scr_opt_load(lua_State *L)
 {
@@ -931,7 +947,8 @@ static int scr_traceback(lua_State *L)
 static int scriptInit(ScriptSystem *s, UiState *ui, SoundSystem *snd,
                       SoundLibrary *sndLib, MusicSystem *music,
                       MusicLibrary *musLib, AssetRegistry *reg,
-                      TexCache *texCache, TexBlurCache *blurCache)
+                      TexCache *texCache, TexBlurCache *blurCache,
+                      const char *optFile)
 {
     s->ui        = ui;
     s->snd       = snd;
@@ -941,6 +958,7 @@ static int scriptInit(ScriptSystem *s, UiState *ui, SoundSystem *snd,
     s->assets    = reg;
     s->texCache  = texCache;
     s->blurCache = blurCache;
+    s->optFile   = optFile;
 
     s->L = luaL_newstate();
     if (!s->L) {
@@ -951,7 +969,7 @@ static int scriptInit(ScriptSystem *s, UiState *ui, SoundSystem *snd,
     scriptSandbox(s->L);
 
     lua_pushlightuserdata(s->L, s);
-    lua_setfield(s->L, LUA_REGISTRYINDEX, "find5.sys");
+    lua_setfield(s->L, LUA_REGISTRYINDEX, "engine.sys");
 
     lua_register(s->L, "ui_show_message", scr_ui_show_message);
     lua_register(s->L, "snd_play",        scr_snd_play);
@@ -973,9 +991,9 @@ static int scriptInit(ScriptSystem *s, UiState *ui, SoundSystem *snd,
     lua_register(s->L, "opt_save",        scr_opt_save);
     lua_register(s->L, "opt_load",        scr_opt_load);
 
-    /* Auto-load find5.dat on init so options are ready before the entry
-       script runs. Lua code can call opt_load() again later if it wants
-       to revert to last-saved state. */
+    /* Auto-load s->optFile on init so options are ready before the
+       entry script runs. Lua code can call opt_load() again later if
+       it wants to revert to last-saved state. */
     opt_loadInternal(s->L);
 
     /* Align / flip constants exposed as Lua globals — see scr_draw_region
