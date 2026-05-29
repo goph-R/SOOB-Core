@@ -224,7 +224,13 @@ static void scr_optfield_color(lua_State *L, int idx,
  *     scale    = 2.0,                  -- uniform; sets scale_x and scale_y
  *     scale_x  = 1.5, scale_y = 1.0,   -- non-uniform (overrides `scale`)
  *     alpha    = 0.5,                  -- transparency
- *     color    = { 1, 0.5, 0.5 [, 0.5] }  -- RGB tint, optional A as 4th
+ *     color    = { 1, 0.5, 0.5 [, 0.5] }, -- RGB tint, optional A as 4th
+ *     src_x    = 8,  src_y  = 0,       -- sub-rect of the REGION's source pixels
+ *     src_w    = 16, src_h  = 8,       --   (origin = region top-left). Defaults
+ *                                      --   reproduce the whole region. Use for
+ *                                      --   atlas frames / 9-patch slice strips.
+ *     dst_w    = 100, dst_h = 32,      -- explicit destination size (vpx);
+ *                                      --   overrides the scale-derived size.
  * })
  *
  * align:
@@ -240,6 +246,17 @@ static void scr_optfield_color(lua_State *L, int idx,
  * scale: multiplies destination size; source UVs unchanged so the sprite
  *   is enlarged, not zoomed. scale also acts on the anchor: the anchored
  *   edge stays put while the opposite edge moves out.
+ *
+ * src_*: override which sub-rect of the region's source pixels is sampled.
+ *   Coordinates are RELATIVE to the region (src_x=0, src_y=0 is the
+ *   region's top-left, not the texture's). Any subset of the four can be
+ *   set; unset ones default to the region's natural box. fill_x/fill_y
+ *   still apply on top of this rect.
+ *
+ * dst_w/h: override the destination size in virtual-canvas pixels.
+ *   scale_x/scale_y are ignored on the overridden axis. Useful when
+ *   stretching an atlas chunk to a widget-sized rect (9-patch corners,
+ *   edges, center).
  *
  * Region must be registered (no raw-path fallback). Must be called from
  * inside uiBegin/uiEnd (i.e., on_render). */
@@ -260,6 +277,14 @@ static int scr_draw_region(lua_State *L)
     float sx_   = 1.0f, sy_ = 1.0f;
     float cr_ = 1.0f, cg_ = 1.0f, cb_ = 1.0f, ca_ = 1.0f;
 
+    /* Optional source sub-rect (for atlas frames / 9-patch slices) and
+       explicit destination size. has_src bits: 1=src_x, 2=src_y, 4=src_w,
+       8=src_h — any subset can override the region's natural box. */
+    int   has_src = 0;
+    int   src_x_ovr = 0, src_y_ovr = 0, src_w_ovr = 0, src_h_ovr = 0;
+    int   has_dst_w = 0, has_dst_h = 0;
+    float dst_w_ovr = 0.0f, dst_h_ovr = 0.0f;
+
     if (lua_istable(L, 4)) {
         /* Options-table form */
         align = scr_optfield_int(L, 4, "align", 0);
@@ -270,6 +295,26 @@ static int scr_draw_region(lua_State *L)
         sx_   = scr_optfield_num(L, 4, "scale_x", uniform);
         sy_   = scr_optfield_num(L, 4, "scale_y", uniform);
         scr_optfield_color(L, 4, &cr_, &cg_, &cb_, &ca_);
+
+        lua_getfield(L, 4, "src_x");
+        if (!lua_isnil(L, -1)) { src_x_ovr = (int)lua_tointeger(L, -1); has_src |= 1; }
+        lua_pop(L, 1);
+        lua_getfield(L, 4, "src_y");
+        if (!lua_isnil(L, -1)) { src_y_ovr = (int)lua_tointeger(L, -1); has_src |= 2; }
+        lua_pop(L, 1);
+        lua_getfield(L, 4, "src_w");
+        if (!lua_isnil(L, -1)) { src_w_ovr = (int)lua_tointeger(L, -1); has_src |= 4; }
+        lua_pop(L, 1);
+        lua_getfield(L, 4, "src_h");
+        if (!lua_isnil(L, -1)) { src_h_ovr = (int)lua_tointeger(L, -1); has_src |= 8; }
+        lua_pop(L, 1);
+
+        lua_getfield(L, 4, "dst_w");
+        if (!lua_isnil(L, -1)) { dst_w_ovr = (float)lua_tonumber(L, -1); has_dst_w = 1; }
+        lua_pop(L, 1);
+        lua_getfield(L, 4, "dst_h");
+        if (!lua_isnil(L, -1)) { dst_h_ovr = (float)lua_tonumber(L, -1); has_dst_h = 1; }
+        lua_pop(L, 1);
     } else {
         /* Positional form (backward-compat with shipped API). */
         align = (int)luaL_optinteger(L, 4, 0);
@@ -292,6 +337,19 @@ static int scr_draw_region(lua_State *L)
     if (fx < 0.0f) fx = 0.0f; if (fx > 1.0f) fx = 1.0f;
     if (fy < 0.0f) fy = 0.0f; if (fy > 1.0f) fy = 1.0f;
 
+    /* Effective source rect — defaults to the registered region, overridden
+       by explicit src_* options. src_x / src_y are RELATIVE to the region
+       origin, so a caller asking for "(8, 0)" gets the same pixel regardless
+       of where the region sits in the texture. */
+    int eff_sx = rg->sx;
+    int eff_sy = rg->sy;
+    int eff_sw = rg->sw;
+    int eff_sh = rg->sh;
+    if (has_src & 1) eff_sx = rg->sx + src_x_ovr;
+    if (has_src & 2) eff_sy = rg->sy + src_y_ovr;
+    if (has_src & 4) eff_sw = src_w_ovr;
+    if (has_src & 8) eff_sh = src_h_ovr;
+
     /* Resolve align (0 in either axis falls back to TOP / LEFT). */
     int alignH = align & 7;
     int alignV = align & 56;
@@ -299,38 +357,38 @@ static int scr_draw_region(lua_State *L)
     if (alignV == 0) alignV = 8;   /* TOP */
 
     /* Visible source size after fill clipping (in source pixels). */
-    float vis_sw = (float)rg->sw * fx;
-    float vis_sh = (float)rg->sh * fy;
+    float vis_sw = (float)eff_sw * fx;
+    float vis_sh = (float)eff_sh * fy;
 
     /* Source clip — shrink from the edge OPPOSITE the anchor. */
     float src_x0, src_x1;
     if (alignH == 1) {            /* LEFT  — keep left edge */
-        src_x0 = (float)rg->sx;
-        src_x1 = (float)rg->sx + vis_sw;
+        src_x0 = (float)eff_sx;
+        src_x1 = (float)eff_sx + vis_sw;
     } else if (alignH == 4) {     /* RIGHT — keep right edge */
-        src_x0 = (float)(rg->sx + rg->sw) - vis_sw;
-        src_x1 = (float)(rg->sx + rg->sw);
+        src_x0 = (float)(eff_sx + eff_sw) - vis_sw;
+        src_x1 = (float)(eff_sx + eff_sw);
     } else {                      /* CENTER — clip both sides equally */
-        src_x0 = (float)rg->sx + ((float)rg->sw - vis_sw) * 0.5f;
+        src_x0 = (float)eff_sx + ((float)eff_sw - vis_sw) * 0.5f;
         src_x1 = src_x0 + vis_sw;
     }
 
     float src_y0, src_y1;
     if (alignV == 8) {            /* TOP */
-        src_y0 = (float)rg->sy;
-        src_y1 = (float)rg->sy + vis_sh;
+        src_y0 = (float)eff_sy;
+        src_y1 = (float)eff_sy + vis_sh;
     } else if (alignV == 32) {    /* BOTTOM */
-        src_y0 = (float)(rg->sy + rg->sh) - vis_sh;
-        src_y1 = (float)(rg->sy + rg->sh);
+        src_y0 = (float)(eff_sy + eff_sh) - vis_sh;
+        src_y1 = (float)(eff_sy + eff_sh);
     } else {                      /* MIDDLE */
-        src_y0 = (float)rg->sy + ((float)rg->sh - vis_sh) * 0.5f;
+        src_y0 = (float)eff_sy + ((float)eff_sh - vis_sh) * 0.5f;
         src_y1 = src_y0 + vis_sh;
     }
 
-    /* Destination rect — visible source size, multiplied by scale,
-       anchored at (x, y) according to align. */
-    float dst_w = vis_sw * sx_;
-    float dst_h = vis_sh * sy_;
+    /* Destination rect — visible source size × scale, or an explicit
+       dst_w/dst_h override. Anchored at (x, y) according to align. */
+    float dst_w = has_dst_w ? dst_w_ovr : vis_sw * sx_;
+    float dst_h = has_dst_h ? dst_h_ovr : vis_sh * sy_;
     float dst_x;
     if (alignH == 1)      dst_x = x;
     else if (alignH == 4) dst_x = x - dst_w;
