@@ -66,6 +66,8 @@ end
 M.DISABLED_ALPHA   = 0.5
 M.FOCUS_COLOR      = { 1, 1, 1, 0.75 }
 M.FOCUS_BORDER_PX  = 1
+M.FOCUS_REGION     = nil       -- if set, a 9-patch focus indicator
+                               -- replaces the thin outline everywhere
 M.DEFAULT_COLOR    = { 1, 1, 1, 1 }
 M.SPATIAL_PERP_K   = 2.0   -- larger = punish lateral offset more in spatial nav
 
@@ -134,8 +136,24 @@ function M.draw_outline(x, y, w, h, thickness, color)
     draw_quad(x + w - thickness,   y,                   thickness, h,         opts)
 end
 
+-- Draw the focus indicator for a widget. If `region` (or M.FOCUS_REGION
+-- as fallback) is set, render it as a 9-patch over the bbox — useful
+-- for textured rings / glow effects. Otherwise fall back to a thin
+-- outline using M.FOCUS_BORDER_PX + M.FOCUS_COLOR; if border thickness
+-- is zero, nothing is drawn (silent opt-out).
+function M.draw_focus_indicator(x, y, w, h, region)
+    region = region or M.FOCUS_REGION
+    if region then
+        M.draw_9patch(region, x, y, w, h)
+    elseif M.FOCUS_BORDER_PX > 0 then
+        M.draw_outline(x, y, w, h, M.FOCUS_BORDER_PX, M.FOCUS_COLOR)
+    end
+end
+
+-- Legacy alias — kept so consumers that call draw_focus_ring directly
+-- keep working. New code should use draw_focus_indicator.
 local function draw_focus_ring(x, y, w, h)
-    M.draw_outline(x, y, w, h, M.FOCUS_BORDER_PX, M.FOCUS_COLOR)
+    M.draw_focus_indicator(x, y, w, h)
 end
 
 M.rect_contains   = rect_contains
@@ -185,16 +203,21 @@ end
 
 -- ---- Button ------------------------------------------------------------
 --
--- bg_up / bg_down / bg_disabled are region names (their slice metadata
--- comes from assets.lua via region_slice). bg_disabled is optional —
--- when missing, the disabled state renders bg_up dimmed.
+-- bg_up / bg_down / bg_focused / bg_disabled are region names (slice
+-- metadata comes from assets.lua via region_slice). All but bg_up are
+-- optional — missing states fall back to bg_up.
 --
 -- bg_color = { up = {...}, down = {...}, focused = {...}, disabled = {...} }
 -- is the flat-color background — useful before art exists or for plain
 -- styling. Each state's color is optional; missing states fall back
--- through focused -> up (priority disabled > pressed > focused > up).
--- When both a region and a color exist for the chosen state, the color
--- draws first and the 9-patch on top.
+-- through .up. When both a region and a color exist for the chosen
+-- state, the color draws first and the 9-patch on top.
+--
+-- show_focus_ring defaults to FALSE on buttons — the focused state
+-- already shows visually via bg_color.focused or bg_focused. Set
+-- show_focus_ring = true on a per-button basis (or set the widget's
+-- focus_region to render a custom 9-patch focus indicator) if you
+-- want the outline back.
 
 function M.button(spec)
     local w = {
@@ -215,6 +238,7 @@ function M.button(spec)
 
         bg_up       = spec.bg_up,
         bg_down     = spec.bg_down,
+        bg_focused  = spec.bg_focused,
         bg_disabled = spec.bg_disabled,
         bg_color    = spec.bg_color,                    -- optional state map
 
@@ -223,6 +247,9 @@ function M.button(spec)
         icon_padding = spec.icon_padding or { l = 0, r = 0, t = 0, b = 0 },
 
         on_click = spec.on_click,
+
+        show_focus_ring = spec.show_focus_ring == true, -- default OFF
+        focus_region    = spec.focus_region,             -- per-button 9-patch
 
         _pressed = false,
     }
@@ -244,6 +271,22 @@ function M.button(spec)
         return map[state] or map.up
     end
 
+    -- Pick the 9-patch region name for the current state, falling
+    -- back to bg_up. Returns the chosen region + whether to dim it
+    -- (true only when bg_up is being used as the disabled fallback).
+    local function pick_region(self, state)
+        if state == "disabled" then
+            if self.bg_disabled then return self.bg_disabled, false end
+            return self.bg_up, (self.bg_up ~= nil)        -- dim bg_up
+        elseif state == "down" then
+            return self.bg_down or self.bg_up, false
+        elseif state == "focused" then
+            return self.bg_focused or self.bg_up, false
+        else
+            return self.bg_up, false
+        end
+    end
+
     function w:draw()
         if not self.visible then return end
 
@@ -256,17 +299,7 @@ function M.button(spec)
         end
 
         -- 9-patch background (drawn over the color fill if present).
-        local bg, dim_bg
-        if state == "disabled" then
-            bg = self.bg_disabled or self.bg_up
-            dim_bg = (self.bg_disabled == nil) and (self.bg_up ~= nil)
-        elseif state == "down" then
-            bg = self.bg_down or self.bg_up
-            dim_bg = false
-        else
-            bg = self.bg_up
-            dim_bg = false
-        end
+        local bg, dim_bg = pick_region(self, state)
         if bg then
             M.draw_9patch(bg, self.x, self.y, self.width, self.height)
             if dim_bg then
@@ -309,8 +342,11 @@ function M.button(spec)
             })
         end
 
-        if self.focused then
-            draw_focus_ring(self.x, self.y, self.width, self.height)
+        -- Buttons default to show_focus_ring=false because their focused
+        -- state already shows via bg_color.focused / bg_focused.
+        if self.focused and self.show_focus_ring then
+            M.draw_focus_indicator(self.x, self.y, self.width, self.height,
+                                   self.focus_region)
         end
     end
 
@@ -402,6 +438,9 @@ function M.checkbox(spec)
         value     = spec.value or false,
         on_change = spec.on_change,
 
+        show_focus_ring = spec.show_focus_ring ~= false,   -- default ON
+        focus_region    = spec.focus_region,
+
         _box_w    = 0,
         _box_h    = 0,
         _pressed  = false,
@@ -460,8 +499,9 @@ function M.checkbox(spec)
             })
         end
 
-        if self.focused then
-            draw_focus_ring(self.x, self.y, self.width, self.height)
+        if self.focused and self.show_focus_ring then
+            M.draw_focus_indicator(self.x, self.y, self.width, self.height,
+                                   self.focus_region)
         end
     end
 
@@ -552,6 +592,9 @@ function M.slider(spec)
         orientation = spec.orientation or "horizontal",
         on_change   = spec.on_change,
 
+        show_focus_ring = spec.show_focus_ring ~= false,   -- default ON
+        focus_region    = spec.focus_region,
+
         _dragging = false,
     }
 
@@ -640,8 +683,9 @@ function M.slider(spec)
                       { color = { 0, 0, 0, 1 - M.DISABLED_ALPHA } })
         end
 
-        if self.focused then
-            draw_focus_ring(self.x, self.y, self.width, self.height)
+        if self.focused and self.show_focus_ring then
+            M.draw_focus_indicator(self.x, self.y, self.width, self.height,
+                                   self.focus_region)
         end
     end
 
@@ -755,6 +799,9 @@ function M.line_edit(spec)
         on_change = spec.on_change,
         on_submit = spec.on_submit,
 
+        show_focus_ring = spec.show_focus_ring ~= false,   -- default ON
+        focus_region    = spec.focus_region,
+
         cursor   = #(spec.text or ""),
         _blink_t = 0,
     }
@@ -855,8 +902,9 @@ function M.line_edit(spec)
             draw_quad(cx, iy, 1, ih, { color = self.color })
         end
 
-        if self.focused then
-            draw_focus_ring(self.x, self.y, self.width, self.height)
+        if self.focused and self.show_focus_ring then
+            M.draw_focus_indicator(self.x, self.y, self.width, self.height,
+                                   self.focus_region)
         end
     end
 
