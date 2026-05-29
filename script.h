@@ -548,6 +548,25 @@ static int scr_draw_quad(lua_State *L)
     return 0;
 }
 
+/* text_width(text [, scale [, font]]) -> w
+ * Pixel width of the rendered text in virtual-canvas units, using the
+ * same font / scale convention as draw_text. Needed for cursor
+ * positioning in line_edit (measure prefix-of-text to find cursor x)
+ * and for any UI that needs to size a background around dynamic text. */
+static int scr_text_width(lua_State *L)
+{
+    lua_getfield(L, LUA_REGISTRYINDEX, "engine.sys");
+    ScriptSystem *s = (ScriptSystem *)lua_touserdata(L, -1);
+    lua_pop(L, 1);
+
+    const char *text = luaL_checkstring(L, 1);
+    float scale      = (float)luaL_optnumber(L, 2, 1.0);
+    const char *font = lua_isstring(L, 3) ? lua_tostring(L, 3) : NULL;
+
+    lua_pushnumber(L, uiTextWidth(s->ui, text, scale, font));
+    return 1;
+}
+
 /* view_size()
  * Returns (virtual_w, virtual_h) of the current UI canvas. virtual_h is
  * always UI_VIRTUAL_H (480); virtual_w scales with the window's aspect.
@@ -1111,6 +1130,7 @@ static int scriptInit(ScriptSystem *s, UiState *ui, SoundSystem *snd,
     lua_register(s->L, "key_modifiers",   scr_key_modifiers);
     lua_register(s->L, "draw_region",     scr_draw_region);
     lua_register(s->L, "draw_text",       scr_draw_text);
+    lua_register(s->L, "text_width",      scr_text_width);
     lua_register(s->L, "draw_ellipse",    scr_draw_ellipse);
     lua_register(s->L, "draw_quad",       scr_draw_quad);
     lua_register(s->L, "draw_bg",         scr_draw_bg);

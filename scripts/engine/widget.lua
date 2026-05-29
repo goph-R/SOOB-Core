@@ -691,6 +691,261 @@ function M.slider(spec)
     return w
 end
 
+-- ---- LineEdit ----------------------------------------------------------
+--
+-- Single-line text input. State: text (string), cursor (int, 0..#text),
+-- _blink_t (cursor blink phase in seconds).
+--
+-- spec fields:
+--   x, y, width, height
+--   text                  initial value (default "")
+--   font, color, scale    text styling
+--   bg_enabled            region name (9-patch); optional
+--   bg_disabled           region name (9-patch); optional
+--   bg_color = { enabled = {...}, disabled = {...} }  optional flat fills
+--   padding = { l, r, t, b }    text inset from bbox (default {6,6,0,0})
+--   max_length            char cap (nil = unlimited)
+--   placeholder           text shown when value is empty and not focused
+--   placeholder_color     color for the placeholder text
+--   on_change             function(self, text)  fires after every edit
+--   on_submit             function(self, text)  fires on Return
+--
+-- Cursor blink runs at 2 Hz (visible for the first 0.25 s of each
+-- 0.5 s cycle). The widget exposes :update(dt) for the host scene to
+-- tick the blink phase; widget.dispatch_update(widgets, dt) ticks
+-- every widget in a list.
+--
+-- Convention (per scripts/engine/scene.lua's on_textinput hook):
+-- navigation keys (Left/Right/Home/End/Backspace/Delete/Return)
+-- handle in keydown; character insertion is in textinput.
+
+local function le_pad(spec_pad)
+    local p = spec_pad or {}
+    return {
+        l = p.l or 6, r = p.r or 6,
+        t = p.t or 0, b = p.b or 0,
+    }
+end
+
+function M.line_edit(spec)
+    local w = {
+        x         = spec.x or 0,
+        y         = spec.y or 0,
+        width     = spec.width or 200,
+        height    = spec.height or 28,
+        disabled  = spec.disabled or false,
+        visible   = spec.visible ~= false,
+        focused   = false,
+        focusable = true,
+
+        text  = spec.text or "",
+        font  = spec.font,
+        color = spec.color or M.DEFAULT_COLOR,
+        scale = spec.scale or 1.0,
+
+        bg_enabled  = spec.bg_enabled,
+        bg_disabled = spec.bg_disabled,
+        bg_color    = spec.bg_color,
+
+        padding           = le_pad(spec.padding),
+        max_length        = spec.max_length,
+        placeholder       = spec.placeholder or "",
+        placeholder_color = spec.placeholder_color or { 0.6, 0.6, 0.65, 0.8 },
+
+        on_change = spec.on_change,
+        on_submit = spec.on_submit,
+
+        cursor   = #(spec.text or ""),
+        _blink_t = 0,
+    }
+
+    -- Inner content rect (after padding).
+    local function inner(self)
+        local p = self.padding
+        return self.x + p.l,
+               self.y + p.t,
+               self.width  - p.l - p.r,
+               self.height - p.t - p.b
+    end
+
+    -- 0..#text — the closest cursor index for a click at virtual x.
+    -- Linear scan over prefix widths; O(N) per click is fine at typical
+    -- input lengths.
+    local function cursor_from_x(self, click_x)
+        local text_x = self.x + self.padding.l
+        local target = click_x - text_x
+        if target <= 0 then return 0 end
+        local best_pos  = 0
+        local best_diff = math.huge
+        for i = 0, #self.text do
+            local w_ = text_width(self.text:sub(1, i), self.scale, self.font)
+            local diff = w_ - target
+            if diff < 0 then diff = -diff end
+            if diff < best_diff then best_pos, best_diff = i, diff end
+        end
+        return best_pos
+    end
+
+    local function cursor_is_visible(self)
+        if not self.focused or self.disabled then return false end
+        return (self._blink_t % 0.5) < 0.25
+    end
+
+    local function emit_change(self)
+        if self.on_change then self:on_change(self.text) end
+    end
+
+    function w:update(dt)
+        if self.focused and not self.disabled then
+            self._blink_t = self._blink_t + dt
+        else
+            self._blink_t = 0
+        end
+    end
+
+    function w:draw()
+        if not self.visible then return end
+
+        -- Flat background fill.
+        local state = self.disabled and "disabled" or "enabled"
+        if self.bg_color then
+            local c = self.bg_color[state] or self.bg_color.enabled
+            if c then
+                draw_quad(self.x, self.y, self.width, self.height, { color = c })
+            end
+        end
+
+        -- 9-patch on top of the fill.
+        local bg = self.disabled and (self.bg_disabled or self.bg_enabled)
+                                 or self.bg_enabled
+        if bg then
+            M.draw_9patch(bg, self.x, self.y, self.width, self.height)
+        end
+
+        local ix, iy, iw, ih = inner(self)
+        local mid_y = self.y + self.height * 0.5
+
+        -- Text or placeholder.
+        local shown = self.text
+        local color
+        if shown == "" and not self.focused and self.placeholder ~= "" then
+            shown = self.placeholder
+            color = self.placeholder_color
+        else
+            color = self.disabled and dimmed(self.color, M.DISABLED_ALPHA)
+                                  or self.color
+        end
+        if shown ~= "" then
+            draw_text(shown, ix, mid_y, {
+                font  = self.font,
+                scale = self.scale,
+                align = 1 + 16,   -- ALIGN_LEFT + ALIGN_MIDDLE
+                color = color,
+            })
+        end
+
+        -- Blinking cursor at the prefix width.
+        if cursor_is_visible(self) then
+            local prefix_w = text_width(self.text:sub(1, self.cursor),
+                                        self.scale, self.font)
+            local cx = ix + prefix_w
+            -- Clamp to inner rect so an over-long string doesn't paint
+            -- the cursor off-screen indefinitely.
+            if cx > ix + iw then cx = ix + iw end
+            draw_quad(cx, iy, 1, ih, { color = self.color })
+        end
+
+        if self.focused then
+            draw_focus_ring(self.x, self.y, self.width, self.height)
+        end
+    end
+
+    function w:hit(px, py)
+        return rect_contains(self.x, self.y, self.width, self.height, px, py)
+    end
+
+    function w:mousedown(px, py, button)
+        if self.disabled or button ~= 1 or not self:hit(px, py) then return false end
+        self.cursor = cursor_from_x(self, px)
+        self._blink_t = 0   -- re-show cursor immediately on click
+        return true
+    end
+
+    function w:mouseup() return false end
+    function w:mousemove() end
+
+    function w:textinput(ch)
+        if self.disabled or not self.focused then return end
+        if not ch or ch == "" then return end
+        if self.max_length and #self.text >= self.max_length then return end
+        local before = self.text:sub(1, self.cursor)
+        local after  = self.text:sub(self.cursor + 1)
+        self.text   = before .. ch .. after
+        self.cursor = self.cursor + #ch
+        self._blink_t = 0
+        emit_change(self)
+    end
+
+    function w:keydown(name)
+        if self.disabled or not self.focused then return false end
+
+        if name == "backspace" then
+            if self.cursor > 0 then
+                self.text   = self.text:sub(1, self.cursor - 1)
+                            .. self.text:sub(self.cursor + 1)
+                self.cursor = self.cursor - 1
+                self._blink_t = 0
+                emit_change(self)
+            end
+            return true
+        end
+
+        if name == "delete" then
+            if self.cursor < #self.text then
+                self.text = self.text:sub(1, self.cursor)
+                          .. self.text:sub(self.cursor + 2)
+                self._blink_t = 0
+                emit_change(self)
+            end
+            return true
+        end
+
+        if name == "left" then
+            if self.cursor > 0 then self.cursor = self.cursor - 1 end
+            self._blink_t = 0
+            return true
+        end
+        if name == "right" then
+            if self.cursor < #self.text then self.cursor = self.cursor + 1 end
+            self._blink_t = 0
+            return true
+        end
+        if name == "home" then self.cursor = 0; self._blink_t = 0; return true end
+        if name == "end"  then self.cursor = #self.text; self._blink_t = 0; return true end
+
+        if name == "return" then
+            if self.on_submit then self:on_submit(self.text) end
+            return true
+        end
+
+        return false   -- Tab / Esc / other keys fall through to scene
+    end
+
+    function w:keyup() return false end
+
+    return w
+end
+
+-- ---- Update dispatch ---------------------------------------------------
+--
+-- Per-frame tick for widgets that need it (LineEdit's cursor blink).
+-- Most widgets don't define :update; the helper just skips them.
+function M.dispatch_update(widgets, dt)
+    for _, w in ipairs(widgets) do
+        if w.update then w:update(dt) end
+    end
+end
+
 -- ---- Focus management --------------------------------------------------
 --
 -- The host scene owns the focused widget reference. These helpers walk
