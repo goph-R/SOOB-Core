@@ -126,6 +126,11 @@ function M.dispatch_keydown(name)
     if t and t.keydown then t:keydown(name) end
 end
 
+function M.dispatch_textinput(char)
+    local t = top()
+    if t and t.textinput then t:textinput(char) end
+end
+
 function M.dispatch_keyup(name)
     local t = top()
     if t and t.keyup then t:keyup(name) end
@@ -158,6 +163,7 @@ function M.install_hooks(env)
     env.on_render    = function()        M.dispatch_render()      end
     env.on_keydown   = function(name)    M.dispatch_keydown(name) end
     env.on_keyup     = function(name)    M.dispatch_keyup(name)   end
+    env.on_textinput = function(ch)      M.dispatch_textinput(ch) end
     env.on_mousedown = function(x, y, b) M.dispatch_mousedown(x, y, b) end
     env.on_mouseup   = function(x, y, b) M.dispatch_mouseup(x, y, b)   end
     env.on_mousemove = function(x, y, dx, dy)

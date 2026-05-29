@@ -171,6 +171,20 @@ static int scr_mouse_down(lua_State *L)
     return 1;
 }
 
+/* key_modifiers() -> shift, ctrl, alt
+ * Current keyboard modifier state as three booleans. Polls
+ * SDL_GetModState() at the moment of the call — useful for chord
+ * detection (Shift-Tab focus-prev, Ctrl-A select-all, etc.) without
+ * threading state through every keydown event. */
+static int scr_key_modifiers(lua_State *L)
+{
+    SDLMod m = SDL_GetModState();
+    lua_pushboolean(L, (m & KMOD_SHIFT) != 0);
+    lua_pushboolean(L, (m & KMOD_CTRL)  != 0);
+    lua_pushboolean(L, (m & KMOD_ALT)   != 0);
+    return 3;
+}
+
 /* ---- Options-table helpers ----
  * Read a named numeric / integer / string field from the table at
  * `idx`, returning the default if the field is missing or nil. */
@@ -1094,6 +1108,7 @@ static int scriptInit(ScriptSystem *s, UiState *ui, SoundSystem *snd,
     lua_register(s->L, "key_down",        scr_key_down);
     lua_register(s->L, "mouse_pos",       scr_mouse_pos);
     lua_register(s->L, "mouse_down",      scr_mouse_down);
+    lua_register(s->L, "key_modifiers",   scr_key_modifiers);
     lua_register(s->L, "draw_region",     scr_draw_region);
     lua_register(s->L, "draw_text",       scr_draw_text);
     lua_register(s->L, "draw_ellipse",    scr_draw_ellipse);
@@ -1445,6 +1460,20 @@ static void scriptCallKeyUp(ScriptSystem *s, const char *name)
     if (!scriptBeginHook(s, "on_keyup")) return;
     lua_pushstring(s->L, name);
     scriptEndHook(s, "on_keyup", 1);
+}
+
+/* on_textinput(char) — printable character produced by a keypress.
+ * Fired AFTER on_keydown for the same event so nav-key widgets handle
+ * arrows / backspace / enter in keydown, and editor widgets handle
+ * character insertion here. `char` is a single-byte Lua string (ASCII
+ * only for v1; non-ASCII unicode is dropped). Use SDL 1.2's
+ * event.key.keysym.unicode field; SDL_EnableUNICODE(1) must have been
+ * called at SDL init (both Find5 and SDLFun already do this). */
+static void scriptCallTextInput(ScriptSystem *s, const char *ch)
+{
+    if (!scriptBeginHook(s, "on_textinput")) return;
+    lua_pushstring(s->L, ch);
+    scriptEndHook(s, "on_textinput", 1);
 }
 
 static void scriptCallMouseDown(ScriptSystem *s, float x, float y, int button)
