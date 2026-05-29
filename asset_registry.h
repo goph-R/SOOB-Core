@@ -24,10 +24,18 @@
 /* A Region is a sub-rectangle of a named texture. Game scripts address
    it by name via draw_region(). sx/sy/sw/sh are in source-texture
    pixels; UV normalization happens at draw time so the texture can be
-   any size. */
+   any size.
+
+   Optional 9-patch slice: when hasSlice is set, x1/x2/y1/y2 give the
+   four cut lines (vertical x1/x2, horizontal y1/y2) relative to the
+   region's own top-left, in source pixels. Widgets read this via the
+   region_slice() Lua binding to drive draw_9patch() without repeating
+   the slice numbers at every call site. */
 struct Region {
     char texName[ASSET_NAME_MAX];  /* references AssetRegistry.textureNames */
     int  sx, sy, sw, sh;
+    int  hasSlice;                 /* 0 = plain region, 1 = carries slice info */
+    int  x1, x2, y1, y2;           /* 9-patch slice cuts (relative to region) */
 };
 
 struct AssetRegistry {
@@ -118,8 +126,25 @@ static int assetRegAddRegion(AssetRegistry *r, const char *name, const char *tex
     r->regions[i].sy = sy;
     r->regions[i].sw = sw;
     r->regions[i].sh = sh;
+    r->regions[i].hasSlice = 0;
+    r->regions[i].x1 = 0; r->regions[i].x2 = 0;
+    r->regions[i].y1 = 0; r->regions[i].y2 = 0;
     r->regionCount++;
     return 1;
+}
+
+/* Attach 9-patch slice metadata to the most recently added region. Called by
+   scr_walkRegionsTable after assetRegAddRegion when the assets.lua entry has
+   an optional `slice = { x1, x2, y1, y2 }` table. No-op if the region wasn't
+   just added (regionCount == 0). */
+static void assetRegSetLastRegionSlice(AssetRegistry *r,
+                                       int x1, int x2, int y1, int y2)
+{
+    if (!r || r->regionCount <= 0) return;
+    int i = r->regionCount - 1;
+    r->regions[i].hasSlice = 1;
+    r->regions[i].x1 = x1; r->regions[i].x2 = x2;
+    r->regions[i].y1 = y1; r->regions[i].y2 = y2;
 }
 
 static const Region *assetRegFindRegion(const AssetRegistry *r, const char *name)

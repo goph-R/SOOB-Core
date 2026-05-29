@@ -549,6 +549,37 @@ static int scr_view_size(lua_State *L)
     return 2;
 }
 
+/* region_slice(name)
+ * Returns the 9-patch slice cuts attached to a region in assets.lua:
+ *   x1, x2, y1, y2  — vertical and horizontal cut lines, in region-local
+ *                     source pixels (origin = region's top-left).
+ *
+ * Returns nothing (i.e. nil in Lua) if the region isn't registered or
+ * carries no slice. Widgets use this to drive draw_9patch() from a
+ * single source of truth — slice numbers live next to the region in
+ * assets.lua, not at every widget call site.
+ *
+ * Plus the region's source width and height as 5th and 6th returns
+ * for convenience (callers usually need them to derive corner sizes). */
+static int scr_region_slice(lua_State *L)
+{
+    lua_getfield(L, LUA_REGISTRYINDEX, "engine.sys");
+    ScriptSystem *s = (ScriptSystem *)lua_touserdata(L, -1);
+    lua_pop(L, 1);
+
+    const char *name = luaL_checkstring(L, 1);
+    const Region *rg = assetRegFindRegion(s->assets, name);
+    if (!rg || !rg->hasSlice) return 0;
+
+    lua_pushinteger(L, rg->x1);
+    lua_pushinteger(L, rg->x2);
+    lua_pushinteger(L, rg->y1);
+    lua_pushinteger(L, rg->y2);
+    lua_pushinteger(L, rg->sw);
+    lua_pushinteger(L, rg->sh);
+    return 6;
+}
+
 /* draw_bg(name)
  * Draws a region scaled to cover the full view, centered, cropping any
  * overflow on the longer axis (CSS background-size: cover). The region's
@@ -1049,6 +1080,7 @@ static int scriptInit(ScriptSystem *s, UiState *ui, SoundSystem *snd,
     lua_register(s->L, "draw_bg",         scr_draw_bg);
     lua_register(s->L, "draw_blur",       scr_draw_blur);
     lua_register(s->L, "view_size",       scr_view_size);
+    lua_register(s->L, "region_slice",    scr_region_slice);
     lua_register(s->L, "opt_set",         scr_opt_set);
     lua_register(s->L, "opt_get",         scr_opt_get);
     lua_register(s->L, "opt_save",        scr_opt_save);
@@ -1171,8 +1203,12 @@ static void scr_onFont(ScriptSystem *s, const char *name, const char *path)
 }
 
 /* Walk a `regions` subtable: each value is a sub-table with fields
-   { tex = "name", x = N, y = N, w = N, h = N }. Missing or non-positive
-   w/h is treated as a config error and logged. */
+   { tex = "name", x = N, y = N, w = N, h = N
+     [, slice = { x1 = N, x2 = N, y1 = N, y2 = N }] }.
+   Missing or non-positive w/h is a config error. The optional `slice`
+   sub-table is read out into the Region's 9-patch metadata so widgets
+   can call region_slice(name) at runtime to drive draw_9patch without
+   repeating the slice numbers at every call site. */
 static int scr_walkRegionsTable(lua_State *L, ScriptSystem *s)
 {
     if (!lua_istable(L, -1)) return 0;
@@ -1199,6 +1235,29 @@ static int scr_walkRegionsTable(lua_State *L, ScriptSystem *s)
 
             if (tex && rw > 0 && rh > 0) {
                 assetRegAddRegion(s->assets, name, tex, rx, ry, rw, rh);
+
+                /* Optional 9-patch slice: { x1, x2, y1, y2 } */
+                lua_getfield(L, -2, "slice");
+                if (lua_istable(L, -1)) {
+                    lua_getfield(L, -1, "x1");
+                    int x1 = (int)lua_tointeger(L, -1); lua_pop(L, 1);
+                    lua_getfield(L, -1, "x2");
+                    int x2 = (int)lua_tointeger(L, -1); lua_pop(L, 1);
+                    lua_getfield(L, -1, "y1");
+                    int y1 = (int)lua_tointeger(L, -1); lua_pop(L, 1);
+                    lua_getfield(L, -1, "y2");
+                    int y2 = (int)lua_tointeger(L, -1); lua_pop(L, 1);
+                    if (x1 >= 0 && x2 > x1 && x2 <= rw &&
+                        y1 >= 0 && y2 > y1 && y2 <= rh) {
+                        assetRegSetLastRegionSlice(s->assets, x1, x2, y1, y2);
+                    } else {
+                        conLogf("script: region '%s' slice out of range "
+                                "(x1=%d x2=%d y1=%d y2=%d, region w=%d h=%d)\n",
+                                name, x1, x2, y1, y2, rw, rh);
+                    }
+                }
+                lua_pop(L, 1);   /* slice table or nil */
+
                 count++;
             } else {
                 conLogf("script: region '%s' missing tex/w/h\n", name);
