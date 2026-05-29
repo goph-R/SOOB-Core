@@ -333,24 +333,96 @@ Input:
   `(max-min) * 0.05` if `step == 0`).
 - Vertical: `"up"`/`"down"`.
 
-## 5. Focus + tab navigation
+## 5. Focus, tab + spatial navigation
 
 Focus tracking is per-scene, not global — the scene that holds the
 widgets owns a `focused_widget` reference. The widget module provides
-a tiny helper to walk a list:
+two layers of navigation helpers:
+
+**Linear (Tab order)** — wraps around the widget list:
 
 ```lua
 function widget.focus_next(widgets, current)  -- returns next focusable
 function widget.focus_prev(widgets, current)
 ```
 
-The scene's `keydown("tab")` calls one of these and sets `current.focused
-= false; new.focused = true`. Tab order = widget list order; an
-explicit `focus_order` field on the widget can override (future).
+Scene's `keydown("tab")` calls one of these; Shift+Tab calls the
+prev variant. Tab order = widget list order; an explicit
+`focus_order` field on the widget can override (future).
+
+**Spatial (Cursor keys)** — moves to the closest enabled focusable
+widget in the requested direction. Only invoked when the focused
+widget itself does NOT consume the key (e.g. a Slider absorbs
+Left/Right to adjust its value, but a Button doesn't, so cursor
+falls through to spatial nav).
+
+```lua
+function widget.focus_direction(widgets, current, dir)
+    -- dir = "up" / "down" / "left" / "right"
+    -- returns the next widget in that direction, or nil
+```
+
+**Algorithm** (the standard "spatial focus" heuristic used by
+console / 10-foot UIs):
+
+1. From `current`'s center `C`, for each other enabled + focusable
+   widget `W`:
+   - `delta = W.center - C`
+   - Split into `axial` (along `dir`) and `perp` (perpendicular).
+   - Skip if `axial <= 0` — wrong side / zero progress.
+2. Score each candidate as `axial + K * perp` where `K = 2.0`. The
+   larger `K`, the more the heuristic punishes lateral offset
+   (prefers candidates that line up with `current` over those that
+   are merely closer but off to the side).
+3. Pick the lowest-scoring candidate; return nil if none.
+
+No wrap-around for spatial nav — wrapping is the Tab key's job.
+If you're at the bottom of a column and press Down, focus stays put.
+
+**Dispatch order in the scene's `keydown(name)`:**
+
+```lua
+function scene:keydown(name)
+    if self.focused_widget and self.focused_widget:keydown(name) then
+        return  -- widget consumed it
+    end
+    -- Widget didn't consume — try navigation.
+    if name == "tab" then
+        self.focused_widget = widget.focus_next(self.widgets,
+                                                self.focused_widget)
+                                                or self.focused_widget
+    elseif name == "up" or name == "down" or name == "left" or name == "right" then
+        local next_w = widget.focus_direction(self.widgets,
+                                              self.focused_widget,
+                                              name)
+        if next_w then self.focused_widget = next_w end
+    end
+end
+```
+
+Per-widget rule on whether to consume cursor keys:
+
+| Widget   | Up | Down | Left | Right | Tab | Notes |
+|----------|----|------|------|-------|-----|-------|
+| Label    | no | no   | no   | no    | n/a | not focusable |
+| Button   | no | no   | no   | no    | no  | Enter/Space fire on_click |
+| Checkbox | no | no   | no   | no    | no  | Space toggles |
+| LineEdit | no | no   | yes  | yes   | no  | L/R move cursor inside text; Home/End absorb |
+| Slider   | yes\* | yes\* | yes\*\* | yes\*\* | no | absorbs the axis matching its orientation |
+
+\* vertical slider only  \** horizontal slider only
+
+This means: in a column of buttons, Up/Down navigates between them.
+Inside a LineEdit, Left/Right moves the text cursor — but if the
+caret is already at the start or end and the user presses Left/Right
+again, the widget could *choose* to fall through (consume returns
+`false`). For v1 the LineEdit *always* absorbs Left/Right when
+focused; spatial nav out of a LineEdit happens via Tab or by clicking
+elsewhere. Refinement later if it feels wrong.
 
 When focused, a widget draws a 1-px outline at `FOCUS_COLOR` inset by
 1 px from the bbox. Standard across all widget types so users see a
-consistent focus ring.
+consistent focus indicator.
 
 ## 6. Asset declarations + slice metadata
 
