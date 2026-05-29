@@ -580,6 +580,27 @@ static int scr_region_slice(lua_State *L)
     return 6;
 }
 
+/* region_size(name) -> w, h
+ * Source pixel dimensions of a registered region (the `w` / `h` fields
+ * set in assets.lua). Returns nothing if the region isn't registered.
+ * Convenience for widgets that need to position adjacent content
+ * (Checkbox laying its text after the box; Slider centering its knob
+ * on the track). */
+static int scr_region_size(lua_State *L)
+{
+    lua_getfield(L, LUA_REGISTRYINDEX, "engine.sys");
+    ScriptSystem *s = (ScriptSystem *)lua_touserdata(L, -1);
+    lua_pop(L, 1);
+
+    const char *name = luaL_checkstring(L, 1);
+    const Region *rg = assetRegFindRegion(s->assets, name);
+    if (!rg) return 0;
+
+    lua_pushinteger(L, rg->sw);
+    lua_pushinteger(L, rg->sh);
+    return 2;
+}
+
 /* draw_bg(name)
  * Draws a region scaled to cover the full view, centered, cropping any
  * overflow on the longer axis (CSS background-size: cover). The region's
@@ -1081,6 +1102,7 @@ static int scriptInit(ScriptSystem *s, UiState *ui, SoundSystem *snd,
     lua_register(s->L, "draw_blur",       scr_draw_blur);
     lua_register(s->L, "view_size",       scr_view_size);
     lua_register(s->L, "region_slice",    scr_region_slice);
+    lua_register(s->L, "region_size",     scr_region_size);
     lua_register(s->L, "opt_set",         scr_opt_set);
     lua_register(s->L, "opt_get",         scr_opt_get);
     lua_register(s->L, "opt_save",        scr_opt_save);

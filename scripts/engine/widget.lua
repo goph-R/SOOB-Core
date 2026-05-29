@@ -353,6 +353,344 @@ function M.button(spec)
     return w
 end
 
+-- ---- Checkbox ----------------------------------------------------------
+--
+-- Fixed layout: the box sits ALIGN_LEFT + ALIGN_MIDDLE inside the
+-- widget bbox; the label follows after `box_gap` pixels. The box's
+-- on-screen width is read from the unchecked region's native size via
+-- region_size(). Click anywhere in the bbox toggles the value.
+--
+-- spec fields:
+--   x, y, width, height
+--   text                    (label drawn after the box)
+--   font, color, scale      (label font + style)
+--   box_unchecked           region name (REQUIRED for the box to render)
+--   box_checked             region name (REQUIRED — same source size as
+--                                       box_unchecked is recommended)
+--   box_unchecked_disabled  optional dimmed-state region
+--   box_checked_disabled    optional dimmed-state region
+--   box_gap                 px between box and label (default 6)
+--   value                   initial bool (default false)
+--   on_change               function(self, new_value)
+--
+-- Without box regions the widget falls back to a 16-px outlined square
+-- — handy during asset bring-up; replace with real art via the box_*
+-- fields once it exists.
+
+function M.checkbox(spec)
+    local w = {
+        x         = spec.x or 0,
+        y         = spec.y or 0,
+        width     = spec.width or 100,
+        height    = spec.height or 20,
+        disabled  = spec.disabled or false,
+        visible   = spec.visible ~= false,
+        focused   = false,
+        focusable = true,
+
+        text  = spec.text or "",
+        font  = spec.font,
+        color = spec.color or M.DEFAULT_COLOR,
+        scale = spec.scale or 1.0,
+
+        box_unchecked          = spec.box_unchecked,
+        box_checked            = spec.box_checked,
+        box_unchecked_disabled = spec.box_unchecked_disabled,
+        box_checked_disabled   = spec.box_checked_disabled,
+        box_gap                = spec.box_gap or 6,
+
+        value     = spec.value or false,
+        on_change = spec.on_change,
+
+        _box_w    = 0,
+        _box_h    = 0,
+        _pressed  = false,
+    }
+
+    -- Resolve box source size at construction. Both states are
+    -- expected to share width; if not, the unchecked region wins (it's
+    -- what we measure against for the text offset).
+    if w.box_unchecked then
+        local bw, bh = region_size(w.box_unchecked)
+        w._box_w = bw or 0
+        w._box_h = bh or 0
+    end
+    -- Fallback when no region: 16-px square so the widget is still
+    -- visible during bring-up.
+    if w._box_w == 0 then w._box_w = 16; w._box_h = 16 end
+
+    local function pick_box(self)
+        if self.value then
+            return (self.disabled and self.box_checked_disabled) or self.box_checked
+        else
+            return (self.disabled and self.box_unchecked_disabled) or self.box_unchecked
+        end
+    end
+
+    function w:draw()
+        if not self.visible then return end
+
+        local region = pick_box(self)
+        local mid_y  = self.y + self.height * 0.5
+
+        if region then
+            draw_region(region, self.x, mid_y, {
+                align = 1 + 16,    -- ALIGN_LEFT + ALIGN_MIDDLE
+            })
+        else
+            -- No region — render a flat outlined square at _box_w size.
+            local box_y = mid_y - self._box_h * 0.5
+            if self.value then
+                draw_quad(self.x, box_y, self._box_w, self._box_h,
+                          { color = { 0.55, 0.55, 0.85, 1.0 } })
+            end
+            M.draw_outline(self.x, box_y, self._box_w, self._box_h,
+                           1, { 0.9, 0.9, 0.95, 0.8 })
+        end
+
+        if self.text and self.text ~= "" then
+            local tx = self.x + self._box_w + self.box_gap
+            local color = self.disabled and dimmed(self.color, M.DISABLED_ALPHA)
+                                        or self.color
+            draw_text(self.text, tx, mid_y, {
+                font  = self.font,
+                scale = self.scale,
+                align = 1 + 16,    -- ALIGN_LEFT + ALIGN_MIDDLE
+                color = color,
+            })
+        end
+
+        if self.focused then
+            draw_focus_ring(self.x, self.y, self.width, self.height)
+        end
+    end
+
+    function w:hit(px, py)
+        return rect_contains(self.x, self.y, self.width, self.height, px, py)
+    end
+
+    local function toggle(self)
+        self.value = not self.value
+        if self.on_change then self:on_change(self.value) end
+    end
+
+    function w:mousedown(px, py, button)
+        if self.disabled or button ~= 1 or not self:hit(px, py) then return false end
+        self._pressed = true
+        return true
+    end
+
+    function w:mouseup(px, py, button)
+        local was = self._pressed
+        self._pressed = false
+        if self.disabled or button ~= 1 then return false end
+        if was and self:hit(px, py) then
+            toggle(self)
+            return true
+        end
+        return false
+    end
+
+    function w:mousemove() end
+
+    function w:keydown(name)
+        if self.disabled or not self.focused then return false end
+        if name == "space" or name == "return" then
+            toggle(self)
+            return true
+        end
+        return false
+    end
+
+    function w:keyup() return false end
+
+    return w
+end
+
+-- ---- Slider ------------------------------------------------------------
+--
+-- Horizontal or vertical drag-to-set value picker. Track is a 9-patch
+-- (optional — falls back to a flat-color quad); knob is a single region
+-- (also optional — flat-color fallback). Mouse drag on track or knob
+-- updates value continuously. Keyboard: left/right (horizontal) or
+-- up/down (vertical) adjust by `step`, or by 5% of (max - min) when
+-- step == 0.
+--
+-- spec fields:
+--   x, y, width, height
+--   track_bg          region name (9-patch); optional
+--   knob              region name (sprite);  optional
+--   knob_w, knob_h    explicit knob size; defaults to knob region's
+--                     native size, or 16 if no knob region
+--   min, max          numeric range (default 0..1)
+--   value             current value (default min)
+--   step              snap step; 0 (default) = continuous
+--   orientation       "horizontal" (default) or "vertical"
+--   on_change         function(self, new_value); fires while dragging
+
+function M.slider(spec)
+    local w = {
+        x         = spec.x or 0,
+        y         = spec.y or 0,
+        width     = spec.width or 200,
+        height    = spec.height or 24,
+        disabled  = spec.disabled or false,
+        visible   = spec.visible ~= false,
+        focused   = false,
+        focusable = true,
+
+        track_bg = spec.track_bg,
+        knob     = spec.knob,
+        knob_w   = spec.knob_w,
+        knob_h   = spec.knob_h,
+
+        min   = spec.min or 0.0,
+        max   = spec.max or 1.0,
+        value = spec.value or spec.min or 0.0,
+        step  = spec.step or 0.0,
+
+        orientation = spec.orientation or "horizontal",
+        on_change   = spec.on_change,
+
+        _dragging = false,
+    }
+
+    -- Knob source size: explicit override, else region's native size,
+    -- else 16-px fallback.
+    if w.knob and (not w.knob_w or not w.knob_h) then
+        local kw, kh = region_size(w.knob)
+        w.knob_w = w.knob_w or kw
+        w.knob_h = w.knob_h or kh
+    end
+    w.knob_w = w.knob_w or 16
+    w.knob_h = w.knob_h or 16
+
+    local function clamp_snap(self, v)
+        if v < self.min then v = self.min end
+        if v > self.max then v = self.max end
+        if self.step and self.step > 0 then
+            v = math.floor((v - self.min) / self.step + 0.5) * self.step + self.min
+            if v > self.max then v = self.max end
+        end
+        return v
+    end
+
+    -- Convert mouse position to a value along the slider's long axis.
+    -- Centered on the knob (the value 0 puts the knob's center at the
+    -- start; value max puts it at end) — knob_w / knob_h reduce the
+    -- effective travel.
+    local function pos_to_value(self, px, py)
+        local pct
+        if self.orientation == "vertical" then
+            local travel = self.height - self.knob_h
+            pct = travel > 0 and (py - self.y - self.knob_h * 0.5) / travel or 0
+        else
+            local travel = self.width - self.knob_w
+            pct = travel > 0 and (px - self.x - self.knob_w * 0.5) / travel or 0
+        end
+        if pct < 0 then pct = 0 end
+        if pct > 1 then pct = 1 end
+        return clamp_snap(self, self.min + pct * (self.max - self.min))
+    end
+
+    local function set_value(self, v)
+        v = clamp_snap(self, v)
+        if v ~= self.value then
+            self.value = v
+            if self.on_change then self:on_change(v) end
+        end
+    end
+
+    function w:draw()
+        if not self.visible then return end
+
+        -- Track
+        if self.track_bg then
+            M.draw_9patch(self.track_bg, self.x, self.y, self.width, self.height)
+        else
+            draw_quad(self.x, self.y, self.width, self.height,
+                      { color = { 0.18, 0.18, 0.22, 0.85 } })
+        end
+
+        -- Knob position
+        local pct = 0
+        if self.max > self.min then
+            pct = (self.value - self.min) / (self.max - self.min)
+            if pct < 0 then pct = 0 end
+            if pct > 1 then pct = 1 end
+        end
+        local kw, kh = self.knob_w, self.knob_h
+        local kx, ky
+        if self.orientation == "vertical" then
+            kx = self.x + (self.width - kw) * 0.5
+            ky = self.y + pct * (self.height - kh)
+        else
+            kx = self.x + pct * (self.width - kw)
+            ky = self.y + (self.height - kh) * 0.5
+        end
+
+        if self.knob then
+            draw_region(self.knob, kx, ky, { dst_w = kw, dst_h = kh })
+        else
+            draw_quad(kx, ky, kw, kh, { color = { 0.75, 0.75, 0.85, 1.0 } })
+        end
+
+        if self.disabled then
+            draw_quad(self.x, self.y, self.width, self.height,
+                      { color = { 0, 0, 0, 1 - M.DISABLED_ALPHA } })
+        end
+
+        if self.focused then
+            draw_focus_ring(self.x, self.y, self.width, self.height)
+        end
+    end
+
+    function w:hit(px, py)
+        return rect_contains(self.x, self.y, self.width, self.height, px, py)
+    end
+
+    function w:mousedown(px, py, button)
+        if self.disabled or button ~= 1 or not self:hit(px, py) then return false end
+        self._dragging = true
+        set_value(self, pos_to_value(self, px, py))
+        return true
+    end
+
+    function w:mouseup(px, py, button)
+        if button ~= 1 then return false end
+        local was = self._dragging
+        self._dragging = false
+        return was
+    end
+
+    function w:mousemove(px, py)
+        if self._dragging then
+            set_value(self, pos_to_value(self, px, py))
+        end
+    end
+
+    function w:keydown(name)
+        if self.disabled or not self.focused then return false end
+        local sign
+        if self.orientation == "vertical" then
+            if     name == "up"   then sign = -1
+            elseif name == "down" then sign =  1 end
+        else
+            if     name == "left"  then sign = -1
+            elseif name == "right" then sign =  1 end
+        end
+        if not sign then return false end
+        local delta = (self.step and self.step > 0) and self.step
+                                                    or (self.max - self.min) * 0.05
+        set_value(self, self.value + sign * delta)
+        return true
+    end
+
+    function w:keyup() return false end
+
+    return w
+end
+
 -- ---- Focus management --------------------------------------------------
 --
 -- The host scene owns the focused widget reference. These helpers walk
