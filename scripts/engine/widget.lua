@@ -125,17 +125,20 @@ function M.draw_9patch(region_name, x, y, w, h)
     tile(x2, y2, rw,     bh, col3_x, row3_y, rw,     bh)
 end
 
--- Focus ring: 1-px outline at FOCUS_COLOR, drawn inside the bbox.
-local function draw_focus_ring(x, y, w, h)
-    local b = M.FOCUS_BORDER_PX
-    local opts = { color = M.FOCUS_COLOR }
-    draw_quad(x,             y,             w, b, opts)
-    draw_quad(x,             y + h - b,     w, b, opts)
-    draw_quad(x,             y,             b, h, opts)
-    draw_quad(x + w - b,     y,             b, h, opts)
+-- N-px outline at `color`, drawn inside the bbox as four edge quads.
+function M.draw_outline(x, y, w, h, thickness, color)
+    local opts = { color = color }
+    draw_quad(x,                   y,                   w,         thickness, opts)
+    draw_quad(x,                   y + h - thickness,   w,         thickness, opts)
+    draw_quad(x,                   y,                   thickness, h,         opts)
+    draw_quad(x + w - thickness,   y,                   thickness, h,         opts)
 end
 
-M.rect_contains  = rect_contains
+local function draw_focus_ring(x, y, w, h)
+    M.draw_outline(x, y, w, h, M.FOCUS_BORDER_PX, M.FOCUS_COLOR)
+end
+
+M.rect_contains   = rect_contains
 M.draw_focus_ring = draw_focus_ring
 
 -- ---- Label -------------------------------------------------------------
@@ -185,6 +188,13 @@ end
 -- bg_up / bg_down / bg_disabled are region names (their slice metadata
 -- comes from assets.lua via region_slice). bg_disabled is optional —
 -- when missing, the disabled state renders bg_up dimmed.
+--
+-- bg_color = { up = {...}, down = {...}, focused = {...}, disabled = {...} }
+-- is the flat-color background — useful before art exists or for plain
+-- styling. Each state's color is optional; missing states fall back
+-- through focused -> up (priority disabled > pressed > focused > up).
+-- When both a region and a color exist for the chosen state, the color
+-- draws first and the 9-patch on top.
 
 function M.button(spec)
     local w = {
@@ -206,6 +216,7 @@ function M.button(spec)
         bg_up       = spec.bg_up,
         bg_down     = spec.bg_down,
         bg_disabled = spec.bg_disabled,
+        bg_color    = spec.bg_color,                    -- optional state map
 
         icon         = spec.icon,
         icon_align   = spec.icon_align or (1 + 16),     -- LEFT + MIDDLE
@@ -216,15 +227,40 @@ function M.button(spec)
         _pressed = false,
     }
 
+    -- Pick state name (disabled / down / focused / up). Used to index
+    -- both the region map and the color map.
+    local function state_name(self)
+        if self.disabled then return "disabled" end
+        if self._pressed then return "down"     end
+        if self.focused  then return "focused"  end
+        return "up"
+    end
+
+    -- Pick a value from a state-keyed map with fallback chain
+    -- (down -> up, focused -> up, disabled -> up). Returns nil if no
+    -- entry exists for any of the fallbacks.
+    local function pick_state(map, state)
+        if not map then return nil end
+        return map[state] or map.up
+    end
+
     function w:draw()
         if not self.visible then return end
 
-        -- Background: pick by state.
+        local state = state_name(self)
+
+        -- Flat-color background (drawn first if present).
+        local color = pick_state(self.bg_color, state)
+        if color then
+            draw_quad(self.x, self.y, self.width, self.height, { color = color })
+        end
+
+        -- 9-patch background (drawn over the color fill if present).
         local bg, dim_bg
-        if self.disabled then
+        if state == "disabled" then
             bg = self.bg_disabled or self.bg_up
-            dim_bg = (self.bg_disabled == nil)        -- bg_up needs dimming
-        elseif self._pressed then
+            dim_bg = (self.bg_disabled == nil) and (self.bg_up ~= nil)
+        elseif state == "down" then
             bg = self.bg_down or self.bg_up
             dim_bg = false
         else
@@ -232,8 +268,6 @@ function M.button(spec)
             dim_bg = false
         end
         if bg then
-            -- We don't have a tint option on draw_9patch yet; if dim_bg
-            -- is wanted, we draw_9patch then overlay a dim quad.
             M.draw_9patch(bg, self.x, self.y, self.width, self.height)
             if dim_bg then
                 draw_quad(self.x, self.y, self.width, self.height,
