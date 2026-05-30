@@ -295,6 +295,12 @@ function M.image(spec)
         color  = spec.color or M.DEFAULT_COLOR,
         flip   = spec.flip,
 
+        -- Optional draw-time clipping fractions in [0..1] — passed
+        -- straight through to draw_region. Useful for progress bars
+        -- (timebar fill, etc.). nil = full image.
+        fill_x = spec.fill_x,
+        fill_y = spec.fill_y,
+
         -- Animatable transform (see engine.animation).
         alpha = spec.alpha or 1.0,
         scale = spec.scale or 1.0,
@@ -305,9 +311,11 @@ function M.image(spec)
         local sx, sy, sw, sh = scaled_bbox(self.x, self.y, self.width,
                                            self.height, self.scale)
         draw_region(self.region, sx, sy, {
-            dst_w = sw, dst_h = sh,
-            color = with_alpha(self.color, self.alpha),
-            flip  = self.flip,
+            dst_w  = sw, dst_h = sh,
+            color  = with_alpha(self.color, self.alpha),
+            flip   = self.flip,
+            fill_x = self.fill_x,
+            fill_y = self.fill_y,
         })
     end
 
