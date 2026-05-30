@@ -69,35 +69,134 @@ local function top()
     return stack[#stack]
 end
 
+local function index_of(s)
+    for i = 1, #stack do
+        if stack[i] == s then return i end
+    end
+    return nil
+end
+
 -- ---- Inspection -------------------------------------------------------
 
 function M.depth() return #stack end
 function M.top()   return top() end
 function M.empty() return #stack == 0 end
 
--- ---- Mutation ---------------------------------------------------------
+-- ---- Transition state -------------------------------------------------
+--
+-- in_transition flips true when a transition action is attached to any
+-- scene's root and back to false when refresh_in_transition can't find
+-- any scene with an in-flight root.action. The flag is what gates input
+-- and per-scene :update during a fade / slide / zoom (see dispatch_*
+-- below).
 
-function M.push(scene)
+local in_transition = false
+
+local function refresh_in_transition()
+    for i = 1, #stack do
+        if stack[i].root and stack[i].root.action then return end
+    end
+    in_transition = false
+end
+
+-- Attach the "scene is appearing" action returned by transition.fade /
+-- slide / zoom. The scene was already pushed; this just marks it
+-- transparent so the layer below renders behind it, hangs the action
+-- off root.action, and queues "clear transparent" for completion.
+local function attach_in_action(scene, action)
+    if not scene.root or not action then return end
+    scene.transparent = true
+    scene.root.action = action
+    scene.root.on_action_done = function()
+        scene.transparent = false
+        refresh_in_transition()
+    end
+    in_transition = true
+end
+
+-- Attach the "scene is leaving" action. The scene STAYS in the stack
+-- until its action completes — that's when we actually remove it and
+-- fire :exit. Marked transparent so the layer below shows through as
+-- it fades / slides off.
+local function attach_out_action(scene, action)
+    if not scene.root or not action then return false end
+    scene.transparent = true
+    scene.root.action = action
+    scene.root.on_action_done = function()
+        local i = index_of(scene)
+        if i then table.remove(stack, i) end
+        if scene.exit then scene:exit() end
+        refresh_in_transition()
+    end
+    in_transition = true
+    return true
+end
+
+-- ---- Mutation ---------------------------------------------------------
+--
+-- push / pop / replace take an optional transition descriptor (see
+-- engine.transition). Default is an instant cut — no behavior change
+-- for callers that don't pass one. A scene without a `root` panel
+-- falls back to cut even when a transition is supplied (the system
+-- needs a tween target).
+
+function M.push(scene, transition)
     if type(scene) ~= "table" then
         error("scene.push: expected a table, got " .. type(scene), 2)
     end
     stack[#stack + 1] = scene
     if scene.enter then scene:enter() end
+    if transition and transition.in_action_fn then
+        attach_in_action(scene, transition.in_action_fn(scene))
+    end
 end
 
-function M.pop()
+function M.pop(transition)
     local s = stack[#stack]
     if not s then return nil end
+    if transition and transition.out_action_fn and s.root then
+        if attach_out_action(s, transition.out_action_fn(s)) then
+            return s    -- deferred pop — :exit fires on completion
+        end
+    end
+    -- Instant cut: pop now.
     stack[#stack] = nil
     if s.exit then s:exit() end
     return s
 end
 
--- pop current, push new — used for transitions where you don't want
--- the previous scene to remain on the stack (e.g. menu → game).
-function M.replace(scene)
-    M.pop()
-    M.push(scene)
+-- pop current, push new. With a transition: pushes new on top, runs
+-- the in-action on it, and the out-action on the old scene; the old is
+-- popped (and :exit fires) when its action completes.
+function M.replace(scene, transition)
+    local old = stack[#stack]
+    stack[#stack + 1] = scene
+    if scene.enter then scene:enter() end
+
+    if transition and (transition.in_action_fn or transition.out_action_fn) then
+        if transition.in_action_fn then
+            attach_in_action(scene, transition.in_action_fn(scene))
+        end
+        if old then
+            if transition.out_action_fn and old.root then
+                if not attach_out_action(old, transition.out_action_fn(old)) then
+                    -- root present but action factory returned nil — instant remove
+                    local i = index_of(old)
+                    if i then table.remove(stack, i) end
+                    if old.exit then old:exit() end
+                end
+            else
+                local i = index_of(old)
+                if i then table.remove(stack, i) end
+                if old.exit then old:exit() end
+            end
+        end
+    elseif old then
+        -- Instant cut: remove the old scene right away.
+        local i = index_of(old)
+        if i then table.remove(stack, i) end
+        if old.exit then old:exit() end
+    end
 end
 
 -- Pop everything. Each scene's exit() fires top-down.
@@ -111,6 +210,17 @@ end
 -- scene.
 
 function M.dispatch_update(dt)
+    if in_transition then
+        -- Tick every scene's root so both the leaving and entering
+        -- transitions advance in lockstep. Skip the normal scene
+        -- :update so per-scene timers (LineEdit cursor blink, score
+        -- count-ups, gameplay clocks) don't drift mid-fade.
+        for i = 1, #stack do
+            local s = stack[i]
+            if s.root then anim.tick_action(s.root, dt) end
+        end
+        return
+    end
     local t = top()
     if not t then return end
     -- Tick the root panel's OWN action before delegating, so a scene
@@ -138,7 +248,11 @@ function M.dispatch_render()
     end
 end
 
+-- Input dispatchers short-circuit while a transition is in flight so
+-- stray clicks / keypresses don't land on half-faded buttons.
+
 function M.dispatch_keydown(name)
+    if in_transition then return end
     local t = top()
     if not t then return end
     if t.keydown then t:keydown(name)
@@ -146,6 +260,7 @@ function M.dispatch_keydown(name)
 end
 
 function M.dispatch_textinput(char)
+    if in_transition then return end
     local t = top()
     if not t then return end
     if t.textinput then t:textinput(char)
@@ -153,11 +268,13 @@ function M.dispatch_textinput(char)
 end
 
 function M.dispatch_keyup(name)
+    if in_transition then return end
     local t = top()
     if t and t.keyup then t:keyup(name) end
 end
 
 function M.dispatch_mousedown(x, y, button)
+    if in_transition then return end
     local t = top()
     if not t then return end
     if t.mousedown then t:mousedown(x, y, button)
@@ -165,6 +282,7 @@ function M.dispatch_mousedown(x, y, button)
 end
 
 function M.dispatch_mouseup(x, y, button)
+    if in_transition then return end
     local t = top()
     if not t then return end
     if t.mouseup then t:mouseup(x, y, button)
@@ -172,6 +290,7 @@ function M.dispatch_mouseup(x, y, button)
 end
 
 function M.dispatch_mousemove(x, y, dx, dy)
+    if in_transition then return end
     local t = top()
     if not t then return end
     if t.mousemove then t:mousemove(x, y, dx, dy)

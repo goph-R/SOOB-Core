@@ -310,8 +310,16 @@ function M.image(spec)
         if not self.visible or self.alpha <= 0 or not self.region then return end
         local sx, sy, sw, sh = scaled_bbox(self.x, self.y, self.width,
                                            self.height, self.scale)
+        -- draw_region's dst_w/dst_h overrides bypass its own fill_x/y
+        -- shrinkage — it still clips source UVs but draws at the
+        -- override size, so a half-fill stretches to full width. Bake
+        -- the fill into the dst here so both source and destination
+        -- shrink in lockstep, matching draw_region's natural behavior.
+        local dw, dh = sw, sh
+        if self.fill_x then dw = sw * self.fill_x end
+        if self.fill_y then dh = sh * self.fill_y end
         draw_region(self.region, sx, sy, {
-            dst_w  = sw, dst_h = sh,
+            dst_w  = dw, dst_h = dh,
             color  = with_alpha(self.color, self.alpha),
             flip   = self.flip,
             fill_x = self.fill_x,
