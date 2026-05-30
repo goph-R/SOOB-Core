@@ -6,10 +6,13 @@
 --
 --   widget.label(spec)    -- text in a bbox
 --   widget.button(spec)   -- 3-state 9-patch bg + optional icon + text
+--   widget.panel(spec)    -- container: children in local coords,
+--                            owns focus across them, fans out events
 --
--- A host scene keeps a list of widgets and dispatches its scene-hook
--- callbacks through them — this module stays unaware of engine.scene
--- so widgets can be used inside any rendering context.
+-- A host scene keeps a list of widgets — or a single panel that owns
+-- them — and dispatches its scene-hook callbacks through it. This
+-- module stays unaware of engine.scene so widgets can be used inside
+-- any rendering context.
 --
 -- Spatial cursor navigation: when the focused widget's `keydown(name)`
 -- returns false for "up" / "down" / "left" / "right", the scene calls
@@ -59,6 +62,10 @@ end
 
 local function dimmed(color, factor)
     return { color[1], color[2], color[3], (color[4] or 1.0) * factor }
+end
+
+local function is_focusable(w)
+    return w and w.focusable and not w.disabled and w.visible ~= false
 end
 
 -- ---- Defaults (consumer-overridable on the module) ---------------------
@@ -984,6 +991,150 @@ function M.line_edit(spec)
     return w
 end
 
+-- ---- Panel -------------------------------------------------------------
+--
+-- Container widget that owns a flat list of children laid out in its
+-- own local coordinate space: the panel's (x, y) is the origin and
+-- children's (x, y) are offsets from it. A host scene's per-frame
+-- boilerplate collapses to "build panel, point scene methods at it".
+--
+-- spec fields:
+--   x, y, width, height     bbox in the parent's coord space
+--   visible                 default true
+--
+-- Methods:
+--   :add(child)             append a child; if it's the first focusable
+--                           child, it claims focus
+--   :draw                   offsets children by (x, y) then delegates
+--   :hit(px, py)            panel's own bbox (used when nested)
+--   :mousedown/up/move      translate to local coords, fan out;
+--                           mousedown also runs click-to-focus
+--   :update / :keydown      fan out; keydown uses dispatch_keydown
+--                           over children (focused-child first, then
+--                           Tab / spatial nav within this panel)
+--
+-- Nesting: a child may itself be a panel. Mouse events keep translating
+-- as they descend, draw recurses. Keyboard focus is owned per-panel:
+-- when a click lands inside a child panel, this panel's focused_child
+-- points at that child panel so keydown forwards into it.
+function M.panel(spec)
+    spec = spec or {}
+    local p = {
+        x         = spec.x or 0,
+        y         = spec.y or 0,
+        width     = spec.width  or 0,
+        height    = spec.height or 0,
+        visible   = spec.visible ~= false,
+        focusable = false,
+        focused   = false,
+        disabled  = false,
+
+        is_panel      = true,
+        children      = {},
+        focused_child = nil,
+    }
+
+    function p:add(child)
+        table.insert(self.children, child)
+        if not self.focused_child and is_focusable(child) then
+            self.focused_child = child
+            child.focused = true
+        end
+        return child
+    end
+
+    function p:draw()
+        if not self.visible then return end
+        for _, c in ipairs(self.children) do
+            if c.visible ~= false and c.draw then
+                local lx, ly = c.x, c.y
+                c.x = self.x + lx
+                c.y = self.y + ly
+                c:draw()
+                c.x, c.y = lx, ly
+            end
+        end
+    end
+
+    function p:hit(px, py)
+        return rect_contains(self.x, self.y, self.width, self.height, px, py)
+    end
+
+    -- Click-to-focus walks children in reverse so the topmost-drawn
+    -- child wins overlap. Either claims focus directly (focusable leaf)
+    -- or redirects this panel's focus into a hit child panel.
+    local function claim_focus(self, c)
+        if self.focused_child and self.focused_child ~= c then
+            self.focused_child.focused = false
+        end
+        self.focused_child = c
+    end
+
+    function p:mousedown(px, py, button)
+        if not self.visible then return end
+        local lx, ly = px - self.x, py - self.y
+        if button == 1 then
+            for i = #self.children, 1, -1 do
+                local c = self.children[i]
+                if c.visible ~= false and c.hit and c:hit(lx, ly) then
+                    if c.focusable and not c.disabled then
+                        claim_focus(self, c)
+                        c.focused = true
+                        break
+                    elseif c.is_panel then
+                        claim_focus(self, c)
+                        break
+                    end
+                end
+            end
+        end
+        for _, c in ipairs(self.children) do
+            if c.visible ~= false and c.mousedown then
+                c:mousedown(lx, ly, button)
+            end
+        end
+    end
+
+    function p:mouseup(px, py, button)
+        if not self.visible then return end
+        local lx, ly = px - self.x, py - self.y
+        for _, c in ipairs(self.children) do
+            if c.visible ~= false and c.mouseup then
+                c:mouseup(lx, ly, button)
+            end
+        end
+    end
+
+    function p:mousemove(px, py, dx, dy)
+        if not self.visible then return end
+        local lx, ly = px - self.x, py - self.y
+        for _, c in ipairs(self.children) do
+            if c.visible ~= false and c.mousemove then
+                c:mousemove(lx, ly, dx, dy)
+            end
+        end
+    end
+
+    function p:update(dt)
+        if not self.visible then return end
+        for _, c in ipairs(self.children) do
+            if c.update then c:update(dt) end
+        end
+    end
+
+    function p:keydown(name)
+        if not self.visible or self.disabled then return false end
+        local next_focus = M.dispatch_keydown(
+            self.children, self.focused_child, name)
+        if next_focus then self.focused_child = next_focus end
+        return false
+    end
+
+    function p:keyup() return false end
+
+    return p
+end
+
 -- ---- Update dispatch ---------------------------------------------------
 --
 -- Per-frame tick for widgets that need it (LineEdit's cursor blink).
@@ -1004,10 +1155,6 @@ end
 --   self.focused_widget = widget.focus_next(self.widgets, self.focused_widget)
 --                         or self.focused_widget
 --   self.focused_widget.focused = true
-
-local function is_focusable(w)
-    return w and w.focusable and not w.disabled and w.visible ~= false
-end
 
 -- Linear Tab navigation — wraps. Returns the next focusable widget or
 -- nil if none exist at all. Pass nil for `current` to get the first
