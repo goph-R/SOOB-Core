@@ -468,11 +468,11 @@ function M.button(spec)
             end
         end
 
-        -- Hover overlay — fallback for buttons without dedicated
-        -- bg_hover art. When bg_hover is set, state above already
-        -- resolved to "hover" and painted the region; skip the tint
-        -- so we don't double up.
-        if self._hover and not self.disabled and state ~= "hover" then
+        -- Hover overlay — fallback tint for buttons without dedicated
+        -- bg_hover art. Skip when state is already "hover" (region
+        -- handled it), or "down" (pressed art shouldn't get a hover
+        -- tint on top), or "disabled".
+        if self._hover and (state == "up" or state == "focused") then
             draw_quad(sx, sy, sw, sh,
                       { color = with_alpha(self.hover_color, a) })
         end
