@@ -5,6 +5,8 @@
 -- keyup). Constructors live in this module:
 --
 --   widget.label(spec)    -- text in a bbox
+--   widget.image(spec)    -- static region (logo, decoration) — alpha/
+--                            scale animatable
 --   widget.button(spec)   -- 3-state 9-patch bg + optional icon + text
 --   widget.panel(spec)    -- container: children in local coords,
 --                            owns focus across them, fans out events
@@ -25,6 +27,8 @@
 -- 9 draw_region calls (corners 1:1, edges stretched along their axis,
 -- center stretched both). Regions without a slice degrade to a single
 -- stretched draw_region.
+
+local anim = require "engine.animation"
 
 local M = {}
 
@@ -62,6 +66,23 @@ end
 
 local function dimmed(color, factor)
     return { color[1], color[2], color[3], (color[4] or 1.0) * factor }
+end
+
+-- Multiply a color's alpha component by `mul`. Returns a fresh table —
+-- never mutates the caller's color. Pass 1.0 to opt out (fast path
+-- returns the original).
+local function with_alpha(color, mul)
+    if not color then return nil end
+    if mul == 1.0 then return color end
+    return { color[1], color[2], color[3], (color[4] or 1.0) * mul }
+end
+
+-- Scaled bounding box for a widget that scales around its own center.
+-- Returns (x, y, w, h) of the on-screen rect. scale=1 fast-pathes.
+local function scaled_bbox(x, y, w, h, scale)
+    if scale == 1.0 then return x, y, w, h end
+    local sw, sh = w * scale, h * scale
+    return x + (w - sw) * 0.5, y + (h - sh) * 0.5, sw, sh
 end
 
 local function is_focusable(w)
@@ -180,27 +201,120 @@ function M.label(spec)
         visible   = spec.visible ~= false,
         focusable = false,                       -- labels never receive focus
 
-        text  = spec.text or "",
-        font  = spec.font,
-        align = spec.align or (1 + 8),           -- ALIGN_LEFT + ALIGN_TOP
-        color = spec.color or M.DEFAULT_COLOR,
+        text       = spec.text or "",
+        font       = spec.font,
+        align      = spec.align or (1 + 8),       -- ALIGN_LEFT + ALIGN_TOP
+        color      = spec.color or M.DEFAULT_COLOR,
+        text_scale = spec.text_scale or 1.0,
+
+        -- Animatable transform (see engine.animation). scale grows /
+        -- shrinks the widget around its own center; alpha multiplies
+        -- through every color the widget paints.
+        alpha = spec.alpha or 1.0,
         scale = spec.scale or 1.0,
     }
 
     function w:draw()
-        if not self.visible then return end
-        local tx, ty = anchor_in(self.x, self.y, self.width, self.height, self.align)
+        if not self.visible or self.alpha <= 0 then return end
+        local sx, sy, sw, sh = scaled_bbox(self.x, self.y, self.width,
+                                           self.height, self.scale)
+        local tx, ty = anchor_in(sx, sy, sw, sh, self.align)
         local color = self.disabled and dimmed(self.color, M.DISABLED_ALPHA)
                                     or self.color
         draw_text(self.text, tx, ty, {
             font  = self.font,
-            scale = self.scale,
+            scale = self.text_scale * self.scale,
             align = self.align,
-            color = color,
+            color = with_alpha(color, self.alpha),
         })
     end
 
     function w:hit() return false end
+    function w:mousedown() return false end
+    function w:mouseup()   return false end
+    function w:mousemove() end
+    function w:keydown()   return false end
+    function w:keyup()     return false end
+
+    return w
+end
+
+-- ---- Image -------------------------------------------------------------
+--
+-- A static, non-interactive textured rectangle. Useful when you want
+-- the animation system to drive a logo, decoration, splash, or any
+-- other piece of art that isn't itself a control.
+--
+-- spec fields:
+--   x, y                anchor point in scene/panel-local coords
+--   region              REQUIRED — named region from assets.lua
+--   width, height       on-screen size; defaults to the region's native
+--                       pixel size (queried via region_size at construction)
+--   align               anchor align mask (ALIGN_LEFT|CENTER|RIGHT +
+--                       TOP|MIDDLE|BOTTOM); normalized to top-left for
+--                       storage so subsequent animations move the
+--                       top-left, not the original anchor
+--   color               tint color (default white); animatable via tween_to
+--   flip                FLIP_H | FLIP_V bitmask
+--   alpha, scale        animatable — same semantics as every other widget
+
+function M.image(spec)
+    local x, y = spec.x or 0, spec.y or 0
+    local w_, h_ = spec.width, spec.height
+    if spec.region and (not w_ or not h_) then
+        local rw, rh = region_size(spec.region)
+        w_ = w_ or rw
+        h_ = h_ or rh
+    end
+    w_ = w_ or 0
+    h_ = h_ or 0
+
+    -- Normalize anchor + align to top-left so the stored x/y match the
+    -- bbox convention every other widget uses. Animations that tween x/y
+    -- move the top-left from there on.
+    if spec.align then
+        local ah, av = split_align(spec.align)
+        if     ah == 4 then x = x - w_           -- RIGHT
+        elseif ah == 2 then x = x - w_ * 0.5     -- CENTER
+        end
+        if     av == 32 then y = y - h_          -- BOTTOM
+        elseif av == 16 then y = y - h_ * 0.5    -- MIDDLE
+        end
+    end
+
+    local w = {
+        x         = x,
+        y         = y,
+        width     = w_,
+        height    = h_,
+        visible   = spec.visible ~= false,
+        disabled  = false,
+        focusable = false,                       -- images never receive focus
+
+        region = spec.region,
+        color  = spec.color or M.DEFAULT_COLOR,
+        flip   = spec.flip,
+
+        -- Animatable transform (see engine.animation).
+        alpha = spec.alpha or 1.0,
+        scale = spec.scale or 1.0,
+    }
+
+    function w:draw()
+        if not self.visible or self.alpha <= 0 or not self.region then return end
+        local sx, sy, sw, sh = scaled_bbox(self.x, self.y, self.width,
+                                           self.height, self.scale)
+        draw_region(self.region, sx, sy, {
+            dst_w = sw, dst_h = sh,
+            color = with_alpha(self.color, self.alpha),
+            flip  = self.flip,
+        })
+    end
+
+    function w:hit(px, py)
+        return rect_contains(self.x, self.y, self.width, self.height, px, py)
+    end
+
     function w:mousedown() return false end
     function w:mouseup()   return false end
     function w:mousemove() end
@@ -263,6 +377,12 @@ function M.button(spec)
 
         hover_color = spec.hover_color or M.HOVER_OVERLAY,
 
+        -- Animatable transform (see engine.animation). scale grows /
+        -- shrinks the button around its center; alpha multiplies into
+        -- every color the button paints.
+        alpha = spec.alpha or 1.0,
+        scale = spec.scale or 1.0,
+
         _pressed = false,
         _hover   = false,
     }
@@ -309,23 +429,26 @@ function M.button(spec)
     end
 
     function w:draw()
-        if not self.visible then return end
+        if not self.visible or self.alpha <= 0 then return end
 
+        local sx, sy, sw, sh = scaled_bbox(self.x, self.y, self.width,
+                                           self.height, self.scale)
+        local a     = self.alpha
         local state = state_name(self)
 
         -- Flat-color background (drawn first if present).
         local color = pick_state(self.bg_color, state)
         if color then
-            draw_quad(self.x, self.y, self.width, self.height, { color = color })
+            draw_quad(sx, sy, sw, sh, { color = with_alpha(color, a) })
         end
 
         -- 9-patch background (drawn over the color fill if present).
         local bg, dim_bg = pick_region(self, state)
         if bg then
-            M.draw_9patch(bg, self.x, self.y, self.width, self.height)
+            M.draw_9patch(bg, sx, sy, sw, sh)
             if dim_bg then
-                draw_quad(self.x, self.y, self.width, self.height,
-                          { color = { 0, 0, 0, 1 - M.DISABLED_ALPHA } })
+                draw_quad(sx, sy, sw, sh,
+                          { color = { 0, 0, 0, (1 - M.DISABLED_ALPHA) * a } })
             end
         end
 
@@ -334,49 +457,52 @@ function M.button(spec)
         -- resolved to "hover" and painted the region; skip the tint
         -- so we don't double up.
         if self._hover and not self.disabled and state ~= "hover" then
-            draw_quad(self.x, self.y, self.width, self.height,
-                      { color = self.hover_color })
+            draw_quad(sx, sy, sw, sh,
+                      { color = with_alpha(self.hover_color, a) })
         end
 
-        -- Icon (optional). Anchored within the bbox by icon_align, inset
-        -- from the matching edges by icon_padding. The opposite edges'
-        -- padding is ignored (TOP padding shifts down the icon when
-        -- align is TOP; ignored when align is BOTTOM).
+        -- Icon (optional). Anchored within the SCALED bbox by icon_align,
+        -- inset from the matching edges by icon_padding. The opposite
+        -- edges' padding is ignored (TOP padding shifts down the icon
+        -- when align is TOP; ignored when align is BOTTOM). The icon
+        -- glyph itself also gets scale_x/y so it grows with the bbox.
         if self.icon then
             local ah, av = split_align(self.icon_align)
             local pad = self.icon_padding
             local ix
-            if     ah == 4 then ix = self.x + self.width - (pad.r or 0)
-            elseif ah == 2 then ix = self.x + self.width * 0.5
-            else                ix = self.x + (pad.l or 0) end
+            if     ah == 4 then ix = sx + sw - (pad.r or 0)
+            elseif ah == 2 then ix = sx + sw * 0.5
+            else                ix = sx + (pad.l or 0) end
             local iy
-            if     av == 32 then iy = self.y + self.height - (pad.b or 0)
-            elseif av == 16 then iy = self.y + self.height * 0.5
-            else                 iy = self.y + (pad.t or 0) end
+            if     av == 32 then iy = sy + sh - (pad.b or 0)
+            elseif av == 16 then iy = sy + sh * 0.5
+            else                 iy = sy + (pad.t or 0) end
             local c = self.text_color
             if self.disabled then c = dimmed(c, M.DISABLED_ALPHA) end
-            draw_region(self.icon, ix, iy, { align = self.icon_align, color = c })
+            draw_region(self.icon, ix, iy, {
+                align   = self.icon_align,
+                color   = with_alpha(c, a),
+                scale_x = self.scale, scale_y = self.scale,
+            })
         end
 
         -- Text (optional — buttons can be icon-only).
         if self.text and self.text ~= "" then
-            local tx, ty = anchor_in(self.x, self.y, self.width, self.height,
-                                     self.text_align)
+            local tx, ty = anchor_in(sx, sy, sw, sh, self.text_align)
             local c = self.disabled and dimmed(self.text_color, M.DISABLED_ALPHA)
                                     or self.text_color
             draw_text(self.text, tx, ty, {
                 font  = self.font,
-                scale = self.text_scale,
+                scale = self.text_scale * self.scale,
                 align = self.text_align,
-                color = c,
+                color = with_alpha(c, a),
             })
         end
 
         -- Buttons default to show_focus_ring=false because their focused
         -- state already shows via bg_color.focused / bg_focused.
         if self.focused and self.show_focus_ring then
-            M.draw_focus_indicator(self.x, self.y, self.width, self.height,
-                                   self.focus_region)
+            M.draw_focus_indicator(sx, sy, sw, sh, self.focus_region)
         end
     end
 
@@ -457,10 +583,10 @@ function M.checkbox(spec)
         focused   = false,
         focusable = true,
 
-        text  = spec.text or "",
-        font  = spec.font,
-        color = spec.color or M.DEFAULT_COLOR,
-        scale = spec.scale or 1.0,
+        text       = spec.text or "",
+        font       = spec.font,
+        color      = spec.color or M.DEFAULT_COLOR,
+        text_scale = spec.text_scale or 1.0,
 
         box_unchecked          = spec.box_unchecked,
         box_checked            = spec.box_checked,
@@ -473,6 +599,10 @@ function M.checkbox(spec)
 
         show_focus_ring = spec.show_focus_ring ~= false,   -- default ON
         focus_region    = spec.focus_region,
+
+        -- Animatable transform (see engine.animation).
+        alpha = spec.alpha or 1.0,
+        scale = spec.scale or 1.0,
 
         _box_w    = 0,
         _box_h    = 0,
@@ -500,41 +630,48 @@ function M.checkbox(spec)
     end
 
     function w:draw()
-        if not self.visible then return end
+        if not self.visible or self.alpha <= 0 then return end
+
+        local sx, sy, sw, sh = scaled_bbox(self.x, self.y, self.width,
+                                           self.height, self.scale)
+        local a     = self.alpha
+        local s     = self.scale
+        local box_w = self._box_w * s
+        local box_h = self._box_h * s
+        local mid_y = sy + sh * 0.5
 
         local region = pick_box(self)
-        local mid_y  = self.y + self.height * 0.5
-
         if region then
-            draw_region(region, self.x, mid_y, {
-                align = 1 + 16,    -- ALIGN_LEFT + ALIGN_MIDDLE
+            draw_region(region, sx, mid_y, {
+                align   = 1 + 16,                -- ALIGN_LEFT + ALIGN_MIDDLE
+                color   = with_alpha(M.DEFAULT_COLOR, a),
+                scale_x = s, scale_y = s,
             })
         else
             -- No region — render a flat outlined square at _box_w size.
-            local box_y = mid_y - self._box_h * 0.5
+            local box_y = mid_y - box_h * 0.5
             if self.value then
-                draw_quad(self.x, box_y, self._box_w, self._box_h,
-                          { color = { 0.55, 0.55, 0.85, 1.0 } })
+                draw_quad(sx, box_y, box_w, box_h,
+                          { color = with_alpha({ 0.55, 0.55, 0.85, 1.0 }, a) })
             end
-            M.draw_outline(self.x, box_y, self._box_w, self._box_h,
-                           1, { 0.9, 0.9, 0.95, 0.8 })
+            M.draw_outline(sx, box_y, box_w, box_h,
+                           1, with_alpha({ 0.9, 0.9, 0.95, 0.8 }, a))
         end
 
         if self.text and self.text ~= "" then
-            local tx = self.x + self._box_w + self.box_gap
+            local tx = sx + box_w + self.box_gap * s
             local color = self.disabled and dimmed(self.color, M.DISABLED_ALPHA)
                                         or self.color
             draw_text(self.text, tx, mid_y, {
                 font  = self.font,
-                scale = self.scale,
-                align = 1 + 16,    -- ALIGN_LEFT + ALIGN_MIDDLE
-                color = color,
+                scale = self.text_scale * s,
+                align = 1 + 16,                  -- ALIGN_LEFT + ALIGN_MIDDLE
+                color = with_alpha(color, a),
             })
         end
 
         if self.focused and self.show_focus_ring then
-            M.draw_focus_indicator(self.x, self.y, self.width, self.height,
-                                   self.focus_region)
+            M.draw_focus_indicator(sx, sy, sw, sh, self.focus_region)
         end
     end
 
@@ -628,6 +765,10 @@ function M.slider(spec)
         show_focus_ring = spec.show_focus_ring ~= false,   -- default ON
         focus_region    = spec.focus_region,
 
+        -- Animatable transform (see engine.animation).
+        alpha = spec.alpha or 1.0,
+        scale = spec.scale or 1.0,
+
         _dragging = false,
     }
 
@@ -678,14 +819,21 @@ function M.slider(spec)
     end
 
     function w:draw()
-        if not self.visible then return end
+        if not self.visible or self.alpha <= 0 then return end
+
+        local sx, sy, sw, sh = scaled_bbox(self.x, self.y, self.width,
+                                           self.height, self.scale)
+        local a  = self.alpha
+        local s  = self.scale
+        local kw = self.knob_w * s
+        local kh = self.knob_h * s
 
         -- Track
         if self.track_bg then
-            M.draw_9patch(self.track_bg, self.x, self.y, self.width, self.height)
+            M.draw_9patch(self.track_bg, sx, sy, sw, sh)
         else
-            draw_quad(self.x, self.y, self.width, self.height,
-                      { color = { 0.18, 0.18, 0.22, 0.85 } })
+            draw_quad(sx, sy, sw, sh,
+                      { color = with_alpha({ 0.18, 0.18, 0.22, 0.85 }, a) })
         end
 
         -- Knob position
@@ -695,30 +843,32 @@ function M.slider(spec)
             if pct < 0 then pct = 0 end
             if pct > 1 then pct = 1 end
         end
-        local kw, kh = self.knob_w, self.knob_h
         local kx, ky
         if self.orientation == "vertical" then
-            kx = self.x + (self.width - kw) * 0.5
-            ky = self.y + pct * (self.height - kh)
+            kx = sx + (sw - kw) * 0.5
+            ky = sy + pct * (sh - kh)
         else
-            kx = self.x + pct * (self.width - kw)
-            ky = self.y + (self.height - kh) * 0.5
+            kx = sx + pct * (sw - kw)
+            ky = sy + (sh - kh) * 0.5
         end
 
         if self.knob then
-            draw_region(self.knob, kx, ky, { dst_w = kw, dst_h = kh })
+            draw_region(self.knob, kx, ky, {
+                dst_w = kw, dst_h = kh,
+                color = with_alpha(M.DEFAULT_COLOR, a),
+            })
         else
-            draw_quad(kx, ky, kw, kh, { color = { 0.75, 0.75, 0.85, 1.0 } })
+            draw_quad(kx, ky, kw, kh,
+                      { color = with_alpha({ 0.75, 0.75, 0.85, 1.0 }, a) })
         end
 
         if self.disabled then
-            draw_quad(self.x, self.y, self.width, self.height,
-                      { color = { 0, 0, 0, 1 - M.DISABLED_ALPHA } })
+            draw_quad(sx, sy, sw, sh,
+                      { color = { 0, 0, 0, (1 - M.DISABLED_ALPHA) * a } })
         end
 
         if self.focused and self.show_focus_ring then
-            M.draw_focus_indicator(self.x, self.y, self.width, self.height,
-                                   self.focus_region)
+            M.draw_focus_indicator(sx, sy, sw, sh, self.focus_region)
         end
     end
 
@@ -815,10 +965,10 @@ function M.line_edit(spec)
         focused   = false,
         focusable = true,
 
-        text  = spec.text or "",
-        font  = spec.font,
-        color = spec.color or M.DEFAULT_COLOR,
-        scale = spec.scale or 1.0,
+        text       = spec.text or "",
+        font       = spec.font,
+        color      = spec.color or M.DEFAULT_COLOR,
+        text_scale = spec.text_scale or 1.0,
 
         bg_enabled  = spec.bg_enabled,
         bg_disabled = spec.bg_disabled,
@@ -835,6 +985,13 @@ function M.line_edit(spec)
         show_focus_ring = spec.show_focus_ring ~= false,   -- default ON
         focus_region    = spec.focus_region,
 
+        -- Animatable transform (see engine.animation). NB: hit-testing
+        -- and cursor_from_x measure the LOGICAL (un-scaled) bbox so a
+        -- click during a scale animation still maps to a sensible
+        -- character index. Visual rendering uses the scaled bbox.
+        alpha = spec.alpha or 1.0,
+        scale = spec.scale or 1.0,
+
         cursor   = #(spec.text or ""),
         _blink_t = 0,
     }
@@ -850,7 +1007,8 @@ function M.line_edit(spec)
 
     -- 0..#text — the closest cursor index for a click at virtual x.
     -- Linear scan over prefix widths; O(N) per click is fine at typical
-    -- input lengths.
+    -- input lengths. Measured against the LOGICAL text scale (the
+    -- text_scale field) ignoring the widget-transform scale.
     local function cursor_from_x(self, click_x)
         local text_x = self.x + self.padding.l
         local target = click_x - text_x
@@ -858,7 +1016,7 @@ function M.line_edit(spec)
         local best_pos  = 0
         local best_diff = math.huge
         for i = 0, #self.text do
-            local w_ = text_width(self.text:sub(1, i), self.scale, self.font)
+            local w_ = text_width(self.text:sub(1, i), self.text_scale, self.font)
             local diff = w_ - target
             if diff < 0 then diff = -diff end
             if diff < best_diff then best_pos, best_diff = i, diff end
@@ -884,14 +1042,25 @@ function M.line_edit(spec)
     end
 
     function w:draw()
-        if not self.visible then return end
+        if not self.visible or self.alpha <= 0 then return end
+
+        local sx, sy, sw, sh = scaled_bbox(self.x, self.y, self.width,
+                                           self.height, self.scale)
+        local a   = self.alpha
+        local s   = self.scale
+        local pad = self.padding
+        local ix  = sx + pad.l * s
+        local iy  = sy + pad.t * s
+        local iw  = sw - (pad.l + pad.r) * s
+        local ih  = sh - (pad.t + pad.b) * s
+        local mid_y = sy + sh * 0.5
 
         -- Flat background fill.
         local state = self.disabled and "disabled" or "enabled"
         if self.bg_color then
             local c = self.bg_color[state] or self.bg_color.enabled
             if c then
-                draw_quad(self.x, self.y, self.width, self.height, { color = c })
+                draw_quad(sx, sy, sw, sh, { color = with_alpha(c, a) })
             end
         end
 
@@ -899,11 +1068,8 @@ function M.line_edit(spec)
         local bg = self.disabled and (self.bg_disabled or self.bg_enabled)
                                  or self.bg_enabled
         if bg then
-            M.draw_9patch(bg, self.x, self.y, self.width, self.height)
+            M.draw_9patch(bg, sx, sy, sw, sh)
         end
-
-        local ix, iy, iw, ih = inner(self)
-        local mid_y = self.y + self.height * 0.5
 
         -- Text or placeholder.
         local shown = self.text
@@ -918,26 +1084,25 @@ function M.line_edit(spec)
         if shown ~= "" then
             draw_text(shown, ix, mid_y, {
                 font  = self.font,
-                scale = self.scale,
-                align = 1 + 16,   -- ALIGN_LEFT + ALIGN_MIDDLE
-                color = color,
+                scale = self.text_scale * s,
+                align = 1 + 16,                  -- ALIGN_LEFT + ALIGN_MIDDLE
+                color = with_alpha(color, a),
             })
         end
 
         -- Blinking cursor at the prefix width.
         if cursor_is_visible(self) then
             local prefix_w = text_width(self.text:sub(1, self.cursor),
-                                        self.scale, self.font)
+                                        self.text_scale * s, self.font)
             local cx = ix + prefix_w
             -- Clamp to inner rect so an over-long string doesn't paint
             -- the cursor off-screen indefinitely.
             if cx > ix + iw then cx = ix + iw end
-            draw_quad(cx, iy, 1, ih, { color = self.color })
+            draw_quad(cx, iy, 1, ih, { color = with_alpha(self.color, a) })
         end
 
         if self.focused and self.show_focus_ring then
-            M.draw_focus_indicator(self.x, self.y, self.width, self.height,
-                                   self.focus_region)
+            M.draw_focus_indicator(sx, sy, sw, sh, self.focus_region)
         end
     end
 
@@ -1043,6 +1208,12 @@ end
 -- as they descend, draw recurses. Keyboard focus is owned per-panel:
 -- when a click lands inside a child panel, this panel's focused_child
 -- points at that child panel so keydown forwards into it.
+--
+-- alpha multiplies into every child's alpha during draw, so a fade on
+-- the panel cascades through nested panels and leaf widgets uniformly.
+-- scale on a panel is currently ignored (group-scale needs GL matrix
+-- push/pop, which isn't bound from Lua yet) — animate children
+-- individually for now.
 function M.panel(spec)
     spec = spec or {}
     local p = {
@@ -1054,6 +1225,9 @@ function M.panel(spec)
         focusable = false,
         focused   = false,
         disabled  = false,
+
+        alpha = spec.alpha or 1.0,
+        scale = spec.scale or 1.0,    -- accepted but no-op for v1
 
         is_panel      = true,
         children      = {},
@@ -1070,14 +1244,17 @@ function M.panel(spec)
     end
 
     function p:draw()
-        if not self.visible then return end
+        if not self.visible or self.alpha <= 0 then return end
         for _, c in ipairs(self.children) do
             if c.visible ~= false and c.draw then
                 local lx, ly = c.x, c.y
+                local la     = c.alpha or 1.0
                 c.x = self.x + lx
                 c.y = self.y + ly
+                c.alpha = la * self.alpha
                 c:draw()
                 c.x, c.y = lx, ly
+                c.alpha = la
             end
         end
     end
@@ -1144,6 +1321,7 @@ function M.panel(spec)
     function p:update(dt)
         if not self.visible then return end
         for _, c in ipairs(self.children) do
+            anim.tick_action(c, dt)
             if c.update then c:update(dt) end
         end
     end
@@ -1175,6 +1353,7 @@ end
 -- Most widgets don't define :update; the helper just skips them.
 function M.dispatch_update(widgets, dt)
     for _, w in ipairs(widgets) do
+        anim.tick_action(w, dt)
         if w.update then w:update(dt) end
     end
 end

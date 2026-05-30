@@ -59,6 +59,8 @@
 -- Then push your first scene from on_start():
 --   function on_start() scene.push(main_menu) end
 
+local anim = require "engine.animation"
+
 local M = {}
 
 local stack = {}
@@ -111,6 +113,11 @@ end
 function M.dispatch_update(dt)
     local t = top()
     if not t then return end
+    -- Tick the root panel's OWN action before delegating, so a scene
+    -- that overrides :update (and never reaches root:update) still
+    -- gets its root panel animated. The root's children are ticked
+    -- inside panel:update via anim.tick_action.
+    if t.root then anim.tick_action(t.root, dt) end
     if t.update then t:update(dt)
     elseif t.root and t.root.update then t.root:update(dt) end
 end
