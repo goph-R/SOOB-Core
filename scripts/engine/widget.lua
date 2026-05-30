@@ -385,6 +385,12 @@ function M.button(spec)
 
         hover_color = spec.hover_color or M.HOVER_OVERLAY,
 
+        -- force_down: external override that pins the visual state to
+        -- "down" even when the mouse isn't pressed. Useful when a
+        -- timer-driven press flash needs to outlive the user's actual
+        -- click (Find5's joker button, e.g.).
+        force_down = spec.force_down or false,
+
         -- Animatable transform (see engine.animation). scale grows /
         -- shrinks the button around its center; alpha multiplies into
         -- every color the button paints.
@@ -399,10 +405,12 @@ function M.button(spec)
     -- index both the region map and the color map. Hover only enters
     -- the resolution when an explicit bg_hover region or hover entry
     -- in the color map exists; otherwise the hover_color overlay
-    -- (drawn separately) is the hover affordance.
+    -- (drawn separately) is the hover affordance. force_down lets a
+    -- caller pin the visual to "down" independent of the mouse — sync
+    -- to it each frame; the widget won't clear it for you.
     local function state_name(self)
         if self.disabled then return "disabled" end
-        if self._pressed then return "down"     end
+        if self._pressed or self.force_down then return "down" end
         if self._hover and (self.bg_hover
                             or (self.bg_color and self.bg_color.hover))
             then return "hover" end
