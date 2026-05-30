@@ -54,28 +54,27 @@ end
 
 -- ---- slide -------------------------------------------------------------
 --
--- direction = which way the OLD scene moves off-screen ("left" / "right"
--- / "up" / "down"). The new scene comes in from the opposite edge.
+-- direction = the edge the entering scene comes FROM (and the leaving
+-- scene goes back TO). "left" / "right" / "top" / "bottom". Symmetric
+-- in / out semantics so a modal dialog can be set up with a single
+-- `slide("bottom", 0.3)` and end up rising in from the bottom edge
+-- on push, sliding back out the bottom edge on pop.
 
-local SLIDE_OUT = {
-    left  = {-1,  0},   right = { 1,  0},
-    up    = { 0, -1},   down  = { 0,  1},
-}
-local SLIDE_IN = {
-    left  = { 1,  0},   right = {-1,  0},
-    up    = { 0,  1},   down  = { 0, -1},
+local SLIDE_FROM = {
+    left   = {-1,  0},   right  = { 1,  0},
+    top    = { 0, -1},   bottom = { 0,  1},
 }
 
 function M.slide(direction, duration, easing)
     return {
         out_action_fn = function(s)
             local vw, vh = view_size()
-            local d = SLIDE_OUT[direction]
-            return anim.move_by(d[1] * vw, d[2] * vh, duration, easing)
+            local d = SLIDE_FROM[direction]
+            return anim.move_to(d[1] * vw, d[2] * vh, duration, easing)
         end,
         in_action_fn = function(s)
             local vw, vh = view_size()
-            local d = SLIDE_IN[direction]
+            local d = SLIDE_FROM[direction]
             s.root.x = d[1] * vw
             s.root.y = d[2] * vh
             return anim.move_to(0, 0, duration, easing)
