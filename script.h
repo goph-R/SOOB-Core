@@ -27,6 +27,11 @@ extern "C" {
 #include "lualib.h"
 }
 
+#include <sys/stat.h>
+#ifdef _WIN32
+#include <direct.h>
+#endif
+
 #include "asset_registry.h"
 
 struct ScriptSystem {
@@ -1091,6 +1096,71 @@ static int scr_traceback(lua_State *L)
 }
 
 /* ---- Lifecycle ---- */
+
+/* Make a directory if it doesn't already exist. Returns 0 on success
+   (path now exists and is a directory) or non-zero otherwise. */
+static int scriptEnsureDir(const char *path)
+{
+    struct stat st;
+    if (stat(path, &st) == 0) {
+        return (st.st_mode & S_IFDIR) ? 0 : -1;
+    }
+#ifdef _WIN32
+    return _mkdir(path);
+#else
+    return mkdir(path, 0700);
+#endif
+}
+
+/* Resolve the per-user persistence path for `filename` under app subdir
+   `app_name`. Writes the full path into out (capacity out_size) and
+   creates the app subdirectory if needed.
+
+   Unix: $XDG_CONFIG_HOME/<app>/<file>, or $HOME/.config/<app>/<file>.
+   Modern Windows: %APPDATA%\<app>\<file>.
+   Win98 (no APPDATA) or no env found: falls back to <file> next to the
+   exe. Win98 has full write access everywhere so this is fine; modern
+   OSes without the env vars are essentially unsupported anyway. */
+static void scriptResolveConfigPath(const char *app_name, const char *filename,
+                                    char *out, int out_size)
+{
+#ifdef _WIN32
+    const char *base = getenv("APPDATA");
+    if (base && *base) {
+        char dir[512];
+        snprintf(dir, sizeof(dir), "%s\\%s", base, app_name);
+        if (scriptEnsureDir(dir) == 0) {
+            snprintf(out, out_size, "%s\\%s", dir, filename);
+            conLogf("opt: persistence at %s\n", out);
+            return;
+        }
+    }
+    snprintf(out, out_size, "%s", filename);
+    conLogf("opt: persistence at %s (relative — APPDATA unavailable)\n", out);
+#else
+    const char *xdg  = getenv("XDG_CONFIG_HOME");
+    const char *home = getenv("HOME");
+    char dir[512];
+    if (xdg && *xdg) {
+        snprintf(dir, sizeof(dir), "%s/%s", xdg, app_name);
+    } else if (home && *home) {
+        char parent[512];
+        snprintf(parent, sizeof(parent), "%s/.config", home);
+        scriptEnsureDir(parent);   /* may exist already, ignore result */
+        snprintf(dir, sizeof(dir), "%s/%s", parent, app_name);
+    } else {
+        snprintf(out, out_size, "%s", filename);
+        conLogf("opt: persistence at %s (relative — no HOME)\n", out);
+        return;
+    }
+    if (scriptEnsureDir(dir) == 0) {
+        snprintf(out, out_size, "%s/%s", dir, filename);
+    } else {
+        snprintf(out, out_size, "%s", filename);
+    }
+    conLogf("opt: persistence at %s\n", out);
+#endif
+}
 
 static int scriptInit(ScriptSystem *s, UiState *ui, SoundSystem *snd,
                       SoundLibrary *sndLib, MusicSystem *music,
