@@ -22,10 +22,17 @@
 --   mousedown(self, x, y, button)    virtual-canvas coords
 --   mouseup(self, x, y, button)
 --   mousemove(self, x, y, dx, dy)
+--   root (widget.panel)              auto-forward target (see below)
 --   transparent (boolean)            see "rendering"
 --
 -- Methods are called with the scene table as `self` (use `:` syntax
--- when defining them). Missing methods are no-ops.
+-- when defining them). Missing methods are no-ops — except update /
+-- render / keydown / mousedown / mouseup / mousemove, which auto-
+-- forward to `self.root` when the scene defines no override. So a
+-- scene that just wants to host widgets can set `root = widget.panel
+-- ({...})` and skip all the per-method boilerplate; one that wants to
+-- intercept (custom render with background art, say) defines the
+-- method and calls `self.root:draw()` (or whatever) at the right spot.
 --
 -- Rendering — only the top scene receives update / input, but render
 -- walks the stack from the lowest opaque scene up. A scene with
@@ -103,7 +110,9 @@ end
 
 function M.dispatch_update(dt)
     local t = top()
-    if t and t.update then t:update(dt) end
+    if not t then return end
+    if t.update then t:update(dt)
+    elseif t.root and t.root.update then t.root:update(dt) end
 end
 
 function M.dispatch_render()
@@ -117,18 +126,23 @@ function M.dispatch_render()
     end
     for i = start, n do
         local s = stack[i]
-        if s.render then s:render() end
+        if s.render then s:render()
+        elseif s.root and s.root.draw then s.root:draw() end
     end
 end
 
 function M.dispatch_keydown(name)
     local t = top()
-    if t and t.keydown then t:keydown(name) end
+    if not t then return end
+    if t.keydown then t:keydown(name)
+    elseif t.root and t.root.keydown then t.root:keydown(name) end
 end
 
 function M.dispatch_textinput(char)
     local t = top()
-    if t and t.textinput then t:textinput(char) end
+    if not t then return end
+    if t.textinput then t:textinput(char)
+    elseif t.root and t.root.textinput then t.root:textinput(char) end
 end
 
 function M.dispatch_keyup(name)
@@ -138,17 +152,23 @@ end
 
 function M.dispatch_mousedown(x, y, button)
     local t = top()
-    if t and t.mousedown then t:mousedown(x, y, button) end
+    if not t then return end
+    if t.mousedown then t:mousedown(x, y, button)
+    elseif t.root and t.root.mousedown then t.root:mousedown(x, y, button) end
 end
 
 function M.dispatch_mouseup(x, y, button)
     local t = top()
-    if t and t.mouseup then t:mouseup(x, y, button) end
+    if not t then return end
+    if t.mouseup then t:mouseup(x, y, button)
+    elseif t.root and t.root.mouseup then t.root:mouseup(x, y, button) end
 end
 
 function M.dispatch_mousemove(x, y, dx, dy)
     local t = top()
-    if t and t.mousemove then t:mousemove(x, y, dx, dy) end
+    if not t then return end
+    if t.mousemove then t:mousemove(x, y, dx, dy)
+    elseif t.root and t.root.mousemove then t.root:mousemove(x, y, dx, dy) end
 end
 
 -- ---- Hook installation ------------------------------------------------

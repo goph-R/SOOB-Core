@@ -71,6 +71,8 @@ end
 -- ---- Defaults (consumer-overridable on the module) ---------------------
 
 M.DISABLED_ALPHA   = 0.5
+M.HOVER_OVERLAY    = { 1, 1, 1, 0.15 }   -- additive tint over hovered widgets;
+                                         -- independent of focus / pressed state
 M.FOCUS_COLOR      = { 1, 1, 1, 0.75 }
 M.FOCUS_BORDER_PX  = 1
 M.FOCUS_REGION     = nil       -- if set, a 9-patch focus indicator
@@ -245,6 +247,7 @@ function M.button(spec)
 
         bg_up       = spec.bg_up,
         bg_down     = spec.bg_down,
+        bg_hover    = spec.bg_hover,
         bg_focused  = spec.bg_focused,
         bg_disabled = spec.bg_disabled,
         bg_color    = spec.bg_color,                    -- optional state map
@@ -258,21 +261,30 @@ function M.button(spec)
         show_focus_ring = spec.show_focus_ring == true, -- default OFF
         focus_region    = spec.focus_region,             -- per-button 9-patch
 
+        hover_color = spec.hover_color or M.HOVER_OVERLAY,
+
         _pressed = false,
+        _hover   = false,
     }
 
-    -- Pick state name (disabled / down / focused / up). Used to index
-    -- both the region map and the color map.
+    -- Pick state name (disabled / down / hover / focused / up). Used to
+    -- index both the region map and the color map. Hover only enters
+    -- the resolution when an explicit bg_hover region or hover entry
+    -- in the color map exists; otherwise the hover_color overlay
+    -- (drawn separately) is the hover affordance.
     local function state_name(self)
         if self.disabled then return "disabled" end
         if self._pressed then return "down"     end
+        if self._hover and (self.bg_hover
+                            or (self.bg_color and self.bg_color.hover))
+            then return "hover" end
         if self.focused  then return "focused"  end
         return "up"
     end
 
     -- Pick a value from a state-keyed map with fallback chain
-    -- (down -> up, focused -> up, disabled -> up). Returns nil if no
-    -- entry exists for any of the fallbacks.
+    -- (down -> up, hover -> up, focused -> up, disabled -> up). Returns
+    -- nil if no entry exists for any of the fallbacks.
     local function pick_state(map, state)
         if not map then return nil end
         return map[state] or map.up
@@ -287,6 +299,8 @@ function M.button(spec)
             return self.bg_up, (self.bg_up ~= nil)        -- dim bg_up
         elseif state == "down" then
             return self.bg_down or self.bg_up, false
+        elseif state == "hover" then
+            return self.bg_hover or self.bg_up, false
         elseif state == "focused" then
             return self.bg_focused or self.bg_up, false
         else
@@ -313,6 +327,15 @@ function M.button(spec)
                 draw_quad(self.x, self.y, self.width, self.height,
                           { color = { 0, 0, 0, 1 - M.DISABLED_ALPHA } })
             end
+        end
+
+        -- Hover overlay — fallback for buttons without dedicated
+        -- bg_hover art. When bg_hover is set, state above already
+        -- resolved to "hover" and painted the region; skip the tint
+        -- so we don't double up.
+        if self._hover and not self.disabled and state ~= "hover" then
+            draw_quad(self.x, self.y, self.width, self.height,
+                      { color = self.hover_color })
         end
 
         -- Icon (optional). Anchored within the bbox by icon_align, inset
@@ -380,7 +403,10 @@ function M.button(spec)
         return false
     end
 
-    function w:mousemove() end
+    function w:mousemove(px, py)
+        if self.disabled then self._hover = false; return end
+        self._hover = self:hit(px, py)
+    end
 
     function w:keydown(name)
         if self.disabled or not self.focused then return false end
@@ -1131,6 +1157,14 @@ function M.panel(spec)
     end
 
     function p:keyup() return false end
+
+    -- Only the focused leaf cares about textinput. Fan-out doesn't make
+    -- sense here (a single character would land in every line_edit).
+    function p:textinput(ch)
+        if not self.visible then return end
+        local fc = self.focused_child
+        if fc and fc.textinput then fc:textinput(ch) end
+    end
 
     return p
 end
