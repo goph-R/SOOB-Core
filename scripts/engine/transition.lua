@@ -52,6 +52,33 @@ function M.fade(duration, easing)
     }
 end
 
+-- ---- fade through black ------------------------------------------------
+--
+-- Drives engine.scene.overlay (a black quad drawn on top of every
+-- scene) up to full opacity, swaps the old/new scenes behind the
+-- black frame, then fades the overlay back down. Reliable across
+-- scenes that draw outside their root panel — the overlay covers
+-- direct draw_region calls (menu backgrounds, blur layers) that
+-- root-alpha based fades miss entirely. Half duration is spent on
+-- each side of the swap.
+--
+-- Uses the overlay_action_fn hook on scene.replace; the callback
+-- argument is the scene-module's "swap now" closure that pops the
+-- old scene and pushes / enters the new one.
+
+function M.fade_through_black(duration, easing)
+    local half = duration * 0.5
+    return {
+        overlay_action_fn = function(swap_scenes)
+            return anim.sequence{
+                anim.fade_to(1.0, half, easing),
+                anim.call(swap_scenes),
+                anim.fade_to(0.0, half, easing),
+            }
+        end,
+    }
+end
+
 -- ---- slide -------------------------------------------------------------
 --
 -- direction = the edge the entering scene comes FROM (and the leaving

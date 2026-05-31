@@ -92,7 +92,25 @@ function M.empty() return #stack == 0 end
 
 local in_transition = false
 
+-- ---- Overlay ----------------------------------------------------------
+--
+-- Module-level overlay: a full-canvas quad drawn ON TOP of every scene
+-- by dispatch_render whenever alpha > 0. Externally owned — transition
+-- presets like fade_through_black attach an action that tweens
+-- M.overlay.alpha 0 → 1 → 0 to cover a scene swap. Independent of
+-- per-scene root.alpha, so it covers anything the scene draws (direct
+-- draw_region calls, background art, etc.) — exactly what a fade-via-
+-- root.alpha can't reach. The overlay is ticked once per frame in
+-- dispatch_update (cheap when idle: no action attached).
+
+M.overlay = {
+    alpha  = 0,
+    color  = { 0, 0, 0, 1 },     -- swap for a non-black fade if needed
+    action = nil,
+}
+
 local function refresh_in_transition()
+    if M.overlay.action then return end
     for i = 1, #stack do
         if stack[i].root and stack[i].root.action then return end
     end
@@ -165,10 +183,42 @@ function M.pop(transition)
     return s
 end
 
+-- Overlay-based scene swap. Only one scene is on the stack at any
+-- given moment — the OLD scene renders until the overlay is fully
+-- opaque (mid-transition), then we pop old, push new, fire new:enter.
+-- This keeps the render loop drawing exactly one scene and means the
+-- new scene's enter() (and any state mutation the caller queued) lands
+-- behind a fully-black frame — no flicker of fresh state in the
+-- outgoing scene before the swap.
+local function overlay_replace(scene_new, transition)
+    local old = stack[#stack]
+    local function swap()
+        if old then
+            local i = index_of(old)
+            if i then table.remove(stack, i) end
+            if old.exit then old:exit() end
+        end
+        stack[#stack + 1] = scene_new
+        if scene_new.enter then scene_new:enter() end
+    end
+    M.overlay.alpha  = 0
+    M.overlay.action = transition.overlay_action_fn(swap)
+    M.overlay.on_action_done = function()
+        M.overlay.action = nil
+        refresh_in_transition()
+    end
+    in_transition = true
+end
+
 -- pop current, push new. With a transition: pushes new on top, runs
 -- the in-action on it, and the out-action on the old scene; the old is
 -- popped (and :exit fires) when its action completes.
 function M.replace(scene, transition)
+    if transition and transition.overlay_action_fn then
+        overlay_replace(scene, transition)
+        return
+    end
+
     local old = stack[#stack]
     stack[#stack + 1] = scene
     if scene.enter then scene:enter() end
@@ -210,6 +260,10 @@ end
 -- scene.
 
 function M.dispatch_update(dt)
+    -- Tick the overlay first; it's the action target for overlay-based
+    -- transitions and a no-op when no action is attached.
+    anim.tick_action(M.overlay, dt)
+
     if in_transition then
         -- Tick every scene's root so both the leaving and entering
         -- transitions advance in lockstep. Skip the normal scene
@@ -245,6 +299,20 @@ function M.dispatch_render()
         local s = stack[i]
         if s.render then s:render()
         elseif s.root and s.root.draw then s.root:draw() end
+    end
+
+    -- Module-level overlay (see M.overlay). Drawn after every scene
+    -- so it covers anything any scene rendered — including direct
+    -- draw_region calls outside the panel tree (menu_bg, blur layers,
+    -- etc.) that a root.alpha fade wouldn't reach.
+    if M.overlay.alpha > 0 then
+        local vw, vh = view_size()
+        local c = M.overlay.color
+        local a = M.overlay.alpha
+        if a > 1 then a = 1 end
+        draw_quad(-vw * 0.5, -vh * 0.5, vw, vh, {
+            color = { c[1], c[2], c[3], (c[4] or 1.0) * a },
+        })
     end
 end
 
