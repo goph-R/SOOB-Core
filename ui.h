@@ -587,7 +587,7 @@ static void uiIcon(UiRect r, GLuint tex)
     glDisable(GL_TEXTURE_2D);
 }
 
-/* Textured rectangle with custom UV sub-rect — used by draw_region to
+/* Textured rectangle with custom UV sub-rect — used by drawRegion to
    sample a sprite atlas. u0,v0 is the top-left UV; u1,v1 is the
    bottom-right. Swap them to flip horizontally / vertically. */
 static void uiIconUV(UiRect r, GLuint tex,

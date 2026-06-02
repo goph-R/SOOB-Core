@@ -9,14 +9,14 @@
  * bindings can reach engine state.
  *
  * Bindings:
- *   ui_show_message(text [, seconds])    -> UiState transient message
- *   snd_play(name)                       -> SoundLibrary + SoundSystem
- *   music_play(name [, fade [, loop]])
- *   music_stop([fade])
- *   music_volume(g)
+ *   uiShowMessage(text [, seconds])    -> UiState transient message
+ *   soundPlay(name)                       -> SoundLibrary + SoundSystem
+ *   musicPlay(name [, fade [, loop]])
+ *   musicStop([fade])
+ *   musicVolume(g)
  *
  * Entry points into Lua are scriptCall()'d nullary globals — engine fires
- * on_start() once after assets load.
+ * onStart() once after assets load.
  *
  * This header must be included after sound.h, music.h, ui.h.
  */
@@ -43,13 +43,13 @@ struct ScriptSystem {
     MusicLibrary  *musLib;
     AssetRegistry *assets;
     TexCache      *texCache;   /* shared cache for draw_sprite's lazy PNG loads */
-    TexBlurCache  *blurCache;  /* downsampled color-summary textures (draw_blur) */
+    TexBlurCache  *blurCache;  /* downsampled color-summary textures (drawBlur) */
     const char    *optFile;    /* persistence target, e.g. "find5.dat" — set by scriptInit */
 };
 
 /* ---- C bindings ---- */
 
-/* ui_show_message(text [, seconds])  — seconds defaults to 3. */
+/* uiShowMessage(text [, seconds])  — seconds defaults to 3. */
 static int scr_ui_show_message(lua_State *L)
 {
     lua_getfield(L, LUA_REGISTRYINDEX, "engine.sys");
@@ -62,7 +62,7 @@ static int scr_ui_show_message(lua_State *L)
     return 0;
 }
 
-/* snd_play(name) — head-relative playback. Silently warns and returns if
+/* soundPlay(name) — head-relative playback. Silently warns and returns if
    the name isn't registered. */
 static int scr_sound_play(lua_State *L)
 {
@@ -80,7 +80,7 @@ static int scr_sound_play(lua_State *L)
     return 0;
 }
 
-/* music_play(name [, fadeSec [, loop]])
+/* musicPlay(name [, fadeSec [, loop]])
      fadeSec defaults to 0.5; loop defaults to true.
    Falls through to a raw path if the name isn't registered in musLib. */
 static int scr_music_play(lua_State *L)
@@ -96,7 +96,7 @@ static int scr_music_play(lua_State *L)
     return 0;
 }
 
-/* music_stop([fadeSec]) — fadeSec defaults to 0.5. */
+/* musicStop([fadeSec]) — fadeSec defaults to 0.5. */
 static int scr_music_stop(lua_State *L)
 {
     lua_getfield(L, LUA_REGISTRYINDEX, "engine.sys");
@@ -108,7 +108,7 @@ static int scr_music_stop(lua_State *L)
     return 0;
 }
 
-/* music_volume(g) — clamped to [0,1] inside musicSetVolume. */
+/* musicVolume(g) — clamped to [0,1] inside musicSetVolume. */
 static int scr_music_volume(lua_State *L)
 {
     lua_getfield(L, LUA_REGISTRYINDEX, "engine.sys");
@@ -121,15 +121,15 @@ static int scr_music_volume(lua_State *L)
 }
 
 /* ---- Input ----
- * Polling: key_down(name), mouse_pos(), mouse_down(button).
+ * Polling: keyDown(name), mousePos(), mouseDown(button).
  * Names are SDL's lowercase forms ("space", "escape", "left", "a", "1",
- * "f1"). Use print(key) inside on_keydown to discover names you need.
+ * "f1"). Use print(key) inside onKeydown to discover names you need.
  * Mouse coords are in the UI virtual canvas (center origin, Y-down,
  * ~540 units tall) — same space you draw into with uiIcon / uiText.
  * Mouse buttons: 1=left, 2=middle, 3=right, 4=wheel-up, 5=wheel-down. */
 
 /* Linear-scan name→SDLKey. SDL 1.2 doesn't ship a reverse lookup; the
-   key table is ~300 entries and key_down calls are few per frame, so a
+   key table is ~300 entries and keyDown calls are few per frame, so a
    strcmp loop is fine on a P4. Returns SDLK_UNKNOWN if not found. */
 static SDLKey findKeyByName(const char *name)
 {
@@ -141,7 +141,7 @@ static SDLKey findKeyByName(const char *name)
     return SDLK_UNKNOWN;
 }
 
-/* key_down(name) -> bool */
+/* keyDown(name) -> bool */
 static int scr_key_down(lua_State *L)
 {
     const char *name = luaL_checkstring(L, 1);
@@ -151,7 +151,7 @@ static int scr_key_down(lua_State *L)
     return 1;
 }
 
-/* mouse_pos() -> x, y  (virtual canvas coords) */
+/* mousePos() -> x, y  (virtual canvas coords) */
 static int scr_mouse_pos(lua_State *L)
 {
     lua_getfield(L, LUA_REGISTRYINDEX, "engine.sys");
@@ -167,7 +167,7 @@ static int scr_mouse_pos(lua_State *L)
     return 2;
 }
 
-/* mouse_down(button) -> bool  (1=left, 2=middle, 3=right) */
+/* mouseDown(button) -> bool  (1=left, 2=middle, 3=right) */
 static int scr_mouse_down(lua_State *L)
 {
     int button = (int)luaL_checkinteger(L, 1);
@@ -176,7 +176,7 @@ static int scr_mouse_down(lua_State *L)
     return 1;
 }
 
-/* key_modifiers() -> shift, ctrl, alt
+/* keyModifiers() -> shift, ctrl, alt
  * Current keyboard modifier state as three booleans. Polls
  * SDL_GetModState() at the moment of the call — useful for chord
  * detection (Shift-Tab focus-prev, Ctrl-A select-all, etc.) without
@@ -234,21 +234,21 @@ static void scr_optfield_color(lua_State *L, int idx,
 }
 
 /* ---- Rendering ----
- * draw_region(name, x, y)
- * draw_region(name, x, y, align [, flip [, fill_x [, fill_y]]])
- * draw_region(name, x, y, {
+ * drawRegion(name, x, y)
+ * drawRegion(name, x, y, align [, flip [, fillX [, fillY]]])
+ * drawRegion(name, x, y, {
  *     align    = ALIGN_CENTER + ALIGN_MIDDLE,
  *     flip     = FLIP_H,
- *     fill_x   = 0.5, fill_y = 1.0,
- *     scale    = 2.0,                  -- uniform; sets scale_x and scale_y
- *     scale_x  = 1.5, scale_y = 1.0,   -- non-uniform (overrides `scale`)
+ *     fillX   = 0.5, fillY = 1.0,
+ *     scale    = 2.0,                  -- uniform; sets scaleX and scaleY
+ *     scaleX  = 1.5, scaleY = 1.0,   -- non-uniform (overrides `scale`)
  *     alpha    = 0.5,                  -- transparency
  *     color    = { 1, 0.5, 0.5 [, 0.5] }, -- RGB tint, optional A as 4th
- *     src_x    = 8,  src_y  = 0,       -- sub-rect of the REGION's source pixels
- *     src_w    = 16, src_h  = 8,       --   (origin = region top-left). Defaults
+ *     srcX    = 8,  srcY  = 0,       -- sub-rect of the REGION's source pixels
+ *     srcW    = 16, srcH  = 8,       --   (origin = region top-left). Defaults
  *                                      --   reproduce the whole region. Use for
  *                                      --   atlas frames / 9-patch slice strips.
- *     dst_w    = 100, dst_h = 32,      -- explicit destination size (vpx);
+ *     dstW    = 100, dstH = 32,      -- explicit destination size (vpx);
  *                                      --   overrides the scale-derived size.
  * })
  *
@@ -259,26 +259,26 @@ static void scr_optfield_color(lua_State *L, int idx,
  *
  * flip: FLIP_H(1) | FLIP_V(2), default 0.
  *
- * fill_x/y: fractions in [0,1], default 1.0. <1 clips from the edge
- *   opposite the anchor (LEFT-aligned + fill_x=0.5 keeps the left half).
+ * fillX/y: fractions in [0,1], default 1.0. <1 clips from the edge
+ *   opposite the anchor (LEFT-aligned + fillX=0.5 keeps the left half).
  *
  * scale: multiplies destination size; source UVs unchanged so the sprite
  *   is enlarged, not zoomed. scale also acts on the anchor: the anchored
  *   edge stays put while the opposite edge moves out.
  *
  * src_*: override which sub-rect of the region's source pixels is sampled.
- *   Coordinates are RELATIVE to the region (src_x=0, src_y=0 is the
+ *   Coordinates are RELATIVE to the region (srcX=0, srcY=0 is the
  *   region's top-left, not the texture's). Any subset of the four can be
- *   set; unset ones default to the region's natural box. fill_x/fill_y
+ *   set; unset ones default to the region's natural box. fillX/fillY
  *   still apply on top of this rect.
  *
- * dst_w/h: override the destination size in virtual-canvas pixels.
- *   scale_x/scale_y are ignored on the overridden axis. Useful when
+ * dstW/h: override the destination size in virtual-canvas pixels.
+ *   scaleX/scaleY are ignored on the overridden axis. Useful when
  *   stretching an atlas chunk to a widget-sized rect (9-patch corners,
  *   edges, center).
  *
  * Region must be registered (no raw-path fallback). Must be called from
- * inside uiBegin/uiEnd (i.e., on_render). */
+ * inside uiBegin/uiEnd (i.e., onRender). */
 static int scr_draw_region(lua_State *L)
 {
     lua_getfield(L, LUA_REGISTRYINDEX, "engine.sys");
@@ -297,8 +297,8 @@ static int scr_draw_region(lua_State *L)
     float cr_ = 1.0f, cg_ = 1.0f, cb_ = 1.0f, ca_ = 1.0f;
 
     /* Optional source sub-rect (for atlas frames / 9-patch slices) and
-       explicit destination size. has_src bits: 1=src_x, 2=src_y, 4=src_w,
-       8=src_h — any subset can override the region's natural box. */
+       explicit destination size. has_src bits: 1=srcX, 2=srcY, 4=srcW,
+       8=srcH — any subset can override the region's natural box. */
     int   has_src = 0;
     int   src_x_ovr = 0, src_y_ovr = 0, src_w_ovr = 0, src_h_ovr = 0;
     int   has_dst_w = 0, has_dst_h = 0;
@@ -357,7 +357,7 @@ static int scr_draw_region(lua_State *L)
     if (fy < 0.0f) fy = 0.0f; if (fy > 1.0f) fy = 1.0f;
 
     /* Effective source rect — defaults to the registered region, overridden
-       by explicit src_* options. src_x / src_y are RELATIVE to the region
+       by explicit src_* options. srcX / srcY are RELATIVE to the region
        origin, so a caller asking for "(8, 0)" gets the same pixel regardless
        of where the region sits in the texture. */
     int eff_sx = rg->sx;
@@ -405,7 +405,7 @@ static int scr_draw_region(lua_State *L)
     }
 
     /* Destination rect — visible source size × scale, or an explicit
-       dst_w/dst_h override. Anchored at (x, y) according to align. */
+       dstW/dstH override. Anchored at (x, y) according to align. */
     float dst_w = has_dst_w ? dst_w_ovr : vis_sw * sx_;
     float dst_h = has_dst_h ? dst_h_ovr : vis_sh * sy_;
     float dst_x;
@@ -432,9 +432,9 @@ static int scr_draw_region(lua_State *L)
     return 0;
 }
 
-/* draw_text(text, x, y)
- * draw_text(text, x, y, scale [, font])      -- positional, simple
- * draw_text(text, x, y, {
+/* drawText(text, x, y)
+ * drawText(text, x, y, scale [, font])      -- positional, simple
+ * drawText(text, x, y, {
  *     scale = 1.5,                           -- multiplier of native lineHeight; default 1.0
  *     font  = "default",                     -- name from assets.lua's fonts table
  *     align = ALIGN_CENTER + ALIGN_MIDDLE,   -- anchors the text rect at (x, y)
@@ -487,8 +487,8 @@ static int scr_draw_text(lua_State *L)
     return 0;
 }
 
-/* draw_ellipse(cx, cy, rx, ry)
- * draw_ellipse(cx, cy, rx, ry, {
+/* drawEllipse(cx, cy, rx, ry)
+ * drawEllipse(cx, cy, rx, ry, {
  *     start     = 0.0,         -- 0..1 around the perimeter (0 = right, sweeps CCW)
  *     finish    = 1.0,         -- tween from 0 to 1 for the "drawing" animation
  *     segments  = 64,          -- vertex density (more = smoother)
@@ -525,7 +525,7 @@ static int scr_draw_ellipse(lua_State *L)
     return 0;
 }
 
-/* draw_quad(x, y, w, h [, opts])
+/* drawQuad(x, y, w, h [, opts])
  * Flat-color quad — useful for dim overlays, flash effects, dialog
  * backdrops, anything that doesn't need a texture. (x, y) is the
  * top-left anchor in virtual-canvas coords; w / h are sizes.
@@ -553,10 +553,10 @@ static int scr_draw_quad(lua_State *L)
     return 0;
 }
 
-/* text_width(text [, scale [, font]]) -> w
+/* textWidth(text [, scale [, font]]) -> w
  * Pixel width of the rendered text in virtual-canvas units, using the
- * same font / scale convention as draw_text. Needed for cursor
- * positioning in line_edit (measure prefix-of-text to find cursor x)
+ * same font / scale convention as drawText. Needed for cursor
+ * positioning in lineEdit (measure prefix-of-text to find cursor x)
  * and for any UI that needs to size a background around dynamic text. */
 static int scr_text_width(lua_State *L)
 {
@@ -572,7 +572,7 @@ static int scr_text_width(lua_State *L)
     return 1;
 }
 
-/* view_size()
+/* viewSize()
  * Returns (virtual_w, virtual_h) of the current UI canvas. virtual_h is
  * always UI_VIRTUAL_H (480); virtual_w scales with the window's aspect.
  * Use when you need to anchor against the actual visible edges instead
@@ -587,13 +587,13 @@ static int scr_view_size(lua_State *L)
     return 2;
 }
 
-/* region_slice(name)
+/* regionSlice(name)
  * Returns the 9-patch slice cuts attached to a region in assets.lua:
  *   x1, x2, y1, y2  — vertical and horizontal cut lines, in region-local
  *                     source pixels (origin = region's top-left).
  *
  * Returns nothing (i.e. nil in Lua) if the region isn't registered or
- * carries no slice. Widgets use this to drive draw_9patch() from a
+ * carries no slice. Widgets use this to drive draw9patch() from a
  * single source of truth — slice numbers live next to the region in
  * assets.lua, not at every widget call site.
  *
@@ -618,7 +618,7 @@ static int scr_region_slice(lua_State *L)
     return 6;
 }
 
-/* region_size(name) -> w, h
+/* regionSize(name) -> w, h
  * Source pixel dimensions of a registered region (the `w` / `h` fields
  * set in assets.lua). Returns nothing if the region isn't registered.
  * Convenience for widgets that need to position adjacent content
@@ -639,14 +639,14 @@ static int scr_region_size(lua_State *L)
     return 2;
 }
 
-/* draw_bg(name)
+/* drawBg(name)
  * Draws a region scaled to cover the full view, centered, cropping any
  * overflow on the longer axis (CSS background-size: cover). The region's
  * source pixel size is the "natural" size; we uniformly scale it up by
  * max(view_w / source_w, view_h / source_h) so both dims are covered.
  *
  * Use this for the level / title-screen background. Other UI keeps using
- * draw_region at design-rect coords. */
+ * drawRegion at design-rect coords. */
 static int scr_draw_bg(lua_State *L)
 {
     lua_getfield(L, LUA_REGISTRYINDEX, "engine.sys");
@@ -688,7 +688,7 @@ static int scr_draw_bg(lua_State *L)
     return 0;
 }
 
-/* draw_blur(name [, opts])
+/* drawBlur(name [, opts])
  * Draws a blurred "color summary" of the named region as a backdrop:
  * downsamples the source PNG to `width` × (aspect-derived height), uploads
  * it once (cached), then stretches the tiny texture to fill the view width
@@ -753,21 +753,21 @@ static int scr_draw_blur(lua_State *L)
  *
  * Key-value store backed by a single file next to the exe. Per-game
  * filename, set by scriptInit's `optFile` arg (e.g. "find5.dat",
- * "sdlfun.dat"). Designed for forward compatibility: each opt_get carries
+ * "sdlfun.dat"). Designed for forward compatibility: each optGet carries
  * its own default, so adding / removing / renaming options across
  * versions never breaks an existing save file (orphan keys are quietly
  * ignored, new keys fall back to defaults).
  *
  * Lua API:
- *   opt_set(name, value)        value: string | number | boolean | table
+ *   optSet(name, value)        value: string | number | boolean | table
  *                               pass nil to delete
- *   opt_get(name)               -> value, or nil
- *   opt_get(name, default)      -> default if unset
- *   opt_save()                  -> bool — writes the file atomically
- *   opt_load()                  -> bool — re-reads the file into memory
+ *   optGet(name)               -> value, or nil
+ *   optGet(name, default)      -> default if unset
+ *   optSave()                  -> bool — writes the file atomically
+ *   optLoad()                  -> bool — re-reads the file into memory
  *
  * Internally the option store is one Lua table in the registry under
- * "engine.opts". opt_load is called automatically at the end of scriptInit
+ * "engine.opts". optLoad is called automatically at the end of scriptInit
  * so options are ready before the entry script runs; you only need to
  * call it manually if you want to revert to the last-saved state. */
 
@@ -940,7 +940,7 @@ static void opt_writeValue(lua_State *L, FILE *f, int idx, int depth)
     }
 }
 
-/* opt_set(name, value) */
+/* optSet(name, value) */
 static int scr_opt_set(lua_State *L)
 {
     const char *name = luaL_checkstring(L, 1);
@@ -952,7 +952,7 @@ static int scr_opt_set(lua_State *L)
     return 0;
 }
 
-/* opt_get(name [, default]) */
+/* optGet(name [, default]) */
 static int scr_opt_get(lua_State *L)
 {
     const char *name = luaL_checkstring(L, 1);
@@ -968,7 +968,7 @@ static int scr_opt_get(lua_State *L)
     return 1;
 }
 
-/* opt_save() -> bool. Writes the options table to s->optFile. Returns
+/* optSave() -> bool. Writes the options table to s->optFile. Returns
    true on success, false (with conLogf message) on any failure. Atomic
    via write-to-tmp + rename, so a partial write can't leave a corrupt
    save file. */
@@ -1018,17 +1018,17 @@ static int opt_loadInternal(lua_State *L)
 
     if (luaL_loadfile(L, optFile) != 0) {
         /* File missing or unreadable — fine on first run. Quiet log. */
-        conLogf("opt_load: %s (starting with empty options)\n", lua_tostring(L, -1));
+        conLogf("optLoad: %s (starting with empty options)\n", lua_tostring(L, -1));
         lua_pop(L, 1);
         goto resetEmpty;
     }
     if (lua_pcall(L, 0, 1, 0) != 0) {
-        conLogf("opt_load: parse error: %s\n", lua_tostring(L, -1));
+        conLogf("optLoad: parse error: %s\n", lua_tostring(L, -1));
         lua_pop(L, 1);
         goto resetEmpty;
     }
     if (!lua_istable(L, -1)) {
-        conLogf("opt_load: file did not return a table\n");
+        conLogf("optLoad: file did not return a table\n");
         lua_pop(L, 1);
         goto resetEmpty;
     }
@@ -1041,7 +1041,7 @@ resetEmpty:
     return 0;
 }
 
-/* opt_load() -> bool. Re-reads s->optFile from disk into the options
+/* optLoad() -> bool. Re-reads s->optFile from disk into the options
    table. Useful to revert in-memory edits to the last saved state. */
 static int scr_opt_load(lua_State *L)
 {
@@ -1194,10 +1194,10 @@ static int scriptInit(ScriptSystem *s, UiState *ui, SoundSystem *snd,
     lua_register(s->L, "musicPlay",      scr_music_play);
     lua_register(s->L, "musicStop",      scr_music_stop);
     lua_register(s->L, "musicVolume",    scr_music_volume);
-    lua_register(s->L, "key_down",        scr_key_down);
-    lua_register(s->L, "mouse_pos",       scr_mouse_pos);
-    lua_register(s->L, "mouse_down",      scr_mouse_down);
-    lua_register(s->L, "key_modifiers",   scr_key_modifiers);
+    lua_register(s->L, "keyDown",        scr_key_down);
+    lua_register(s->L, "mousePos",       scr_mouse_pos);
+    lua_register(s->L, "mouseDown",      scr_mouse_down);
+    lua_register(s->L, "keyModifiers",   scr_key_modifiers);
     lua_register(s->L, "drawRegion",     scr_draw_region);
     lua_register(s->L, "drawText",       scr_draw_text);
     lua_register(s->L, "textWidth",      scr_text_width);
@@ -1211,10 +1211,10 @@ static int scriptInit(ScriptSystem *s, UiState *ui, SoundSystem *snd,
     lua_register(s->L, "optSet",         scr_opt_set);
     lua_register(s->L, "optGet",         scr_opt_get);
     lua_register(s->L, "optSave",        scr_opt_save);
-    lua_register(s->L, "opt_load",        scr_opt_load);
+    lua_register(s->L, "optLoad",        scr_opt_load);
 
     /* Auto-load s->optFile on init so options are ready before the
-       entry script runs. Lua code can call opt_load() again later if
+       entry script runs. Lua code can call optLoad() again later if
        it wants to revert to last-saved state. */
     opt_loadInternal(s->L);
 
@@ -1334,7 +1334,7 @@ static void scr_onFont(ScriptSystem *s, const char *name, const char *path)
      [, slice = { x1 = N, x2 = N, y1 = N, y2 = N }] }.
    Missing or non-positive w/h is a config error. The optional `slice`
    sub-table is read out into the Region's 9-patch metadata so widgets
-   can call region_slice(name) at runtime to drive draw_9patch without
+   can call regionSlice(name) at runtime to drive draw9patch without
    repeating the slice numbers at every call site. */
 static int scr_walkRegionsTable(lua_State *L, ScriptSystem *s)
 {
@@ -1503,9 +1503,9 @@ static int scriptCall(ScriptSystem *s, const char *fn)
 /* ---- Hook helpers ----
  * Two-phase API so callers can push the right argument types between
  * Begin and End without scripCall having to know any signatures.
- *   if (scriptBeginHook(s, "on_keydown")) {
+ *   if (scriptBeginHook(s, "onKeydown")) {
  *       lua_pushstring(s->L, name);
- *       scriptEndHook(s, "on_keydown", 1);
+ *       scriptEndHook(s, "onKeydown", 1);
  *   }
  * Begin returns 0 (and leaves the stack untouched) if the hook isn't
  * defined; the caller skips End in that case. */
@@ -1552,8 +1552,8 @@ static void scriptCallKeyUp(ScriptSystem *s, const char *name)
     scriptEndHook(s, "onKeyup", 1);
 }
 
-/* on_textinput(char) — printable character produced by a keypress.
- * Fired AFTER on_keydown for the same event so nav-key widgets handle
+/* onTextinput(char) — printable character produced by a keypress.
+ * Fired AFTER onKeydown for the same event so nav-key widgets handle
  * arrows / backspace / enter in keydown, and editor widgets handle
  * character insertion here. `char` is a single-byte Lua string (ASCII
  * only for v1; non-ASCII unicode is dropped). Use SDL 1.2's

@@ -22,14 +22,14 @@
 #define ASSET_PATH_MAX    128
 
 /* A Region is a sub-rectangle of a named texture. Game scripts address
-   it by name via draw_region(). sx/sy/sw/sh are in source-texture
+   it by name via drawRegion(). sx/sy/sw/sh are in source-texture
    pixels; UV normalization happens at draw time so the texture can be
    any size.
 
    Optional 9-patch slice: when hasSlice is set, x1/x2/y1/y2 give the
    four cut lines (vertical x1/x2, horizontal y1/y2) relative to the
    region's own top-left, in source pixels. Widgets read this via the
-   region_slice() Lua binding to drive draw_9patch() without repeating
+   regionSlice() Lua binding to drive draw9patch() without repeating
    the slice numbers at every call site. */
 struct Region {
     char texName[ASSET_NAME_MAX];  /* references AssetRegistry.textureNames */

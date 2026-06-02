@@ -53,7 +53,7 @@ static GLuint uploadTexture(unsigned char *rgbData, int width, int height, int w
    keepAlpha=0 forces RGB (alpha dropped even if source has it).
    keepAlpha=1 forces RGBA (alpha filled with 255 if source is RGB).
    outW/outH (optional) receive the loaded pixel dimensions — needed by
-   draw_region to compute normalized UVs from pixel-space source rects.
+   drawRegion to compute normalized UVs from pixel-space source rects.
    Returns the GL texture ID, or 0 on failure. */
 static GLuint loadTextureExA(const char *filename, int wrapMode, int keepAlpha,
                              int *outW = 0, int *outH = 0)

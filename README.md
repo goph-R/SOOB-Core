@@ -21,7 +21,7 @@ ui.h              2D virtual-canvas primitives, BMFont, alignment
 sound.h           OpenAL wrapper + SoundLibrary
 music.h           Streaming Ogg Vorbis + crossfade
 asset_registry.h  Name -> path + Region (atlas sub-rect) lookup
-script.h          Lua 5.1 glue + bindings + on_* hook helpers
+script.h          Lua 5.1 glue + bindings + on* hook helpers
 config.h          Config file + CLI arg parsing
 vendor/           SDL 1.2 (Win98), Lua 5.1.5, stb_image, stb_vorbis
 vendor_win10/     SDL/OpenAL headers + libs for the Win10 toolchain
@@ -35,6 +35,24 @@ layout) so existing `#include "script.h"` paths resolve without change.
 The intent is that updates to the engine apply to both games — adding
 a Lua binding, fixing a texture-cache bug, etc. — without manual port
 between repos.
+
+## Lua naming
+
+Case depends on *where the name sits*, not what it means:
+
+- **camelCase** — code identifiers (functions, locals, table fields):
+  `drawRegion`, `rectContains`, `onUpdate`.
+- **snake_case** — string-literal IDs typed in quotes (asset / sound /
+  region names, option keys, state tags), including every `assets.lua`
+  key: `drawRegion("close_icon")`, `soundPlay("sound_id")`,
+  `optGet("music_on")`.
+- **UPPER_SNAKE_CASE** — constants (`ALIGN_CENTER`); **CamelCase** — classes.
+
+So one logical name may appear in two casings by role, e.g.
+`local musicOn = optGet("music_on")`. C bindings expose a camelCase name
+(`lua_register(L, "drawText", scr_draw_text)`) while the C function keeps
+its `scr_` name; rename both sides together. See `CLAUDE.md` for the full
+rule.
 
 ## Constraints
 

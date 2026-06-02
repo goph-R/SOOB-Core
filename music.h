@@ -259,7 +259,7 @@ static void musicPlay(MusicSystem *m, MusicLibrary *lib, const char *name,
     if (!path) path = name;  /* fall through to raw path */
 
     /* If the same path is already playing (and not fading out), do nothing
-       — repeated `music_play("ambient")` calls shouldn't restart the loop. */
+       — repeated `musicPlay("ambient")` calls shouldn't restart the loop. */
     for (int i = 0; i < MUSIC_NUM_TRACKS; i++) {
         MusicTrack *t = &m->tracks[i];
         if (t->vorbis && !t->stopOnFadeOut && strcmp(t->path, path) == 0) {
