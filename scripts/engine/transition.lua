@@ -3,8 +3,8 @@
 -- A transition is a description object consumed by engine.scene's
 -- push / pop / replace. It carries up to two factories:
 --
---   in_action_fn(scene)   -> action          (entering scene's animation)
---   out_action_fn(scene)  -> action          (leaving scene's animation)
+--   inActionFn(scene)   -> action          (entering scene's animation)
+--   outActionFn(scene)  -> action          (leaving scene's animation)
 --
 -- Both are optional and both return an engine.animation action graph
 -- that the scene module attaches to `scene.root.action`. Each factory
@@ -19,7 +19,7 @@
 -- The scene module handles the lifecycle:
 --   * sets scene.transparent = true so the layer below renders during
 --     the transition, then clears it on completion
---   * attaches a root.on_action_done callback that does the cleanup
+--   * attaches a root.onActionDone callback that does the cleanup
 --     (pop the old scene + fire its :exit, etc.)
 --   * gates input + scene update while any transition is in flight
 --
@@ -42,12 +42,12 @@ end
 
 function M.fade(duration, easing)
     return {
-        out_action_fn = function(s)
-            return anim.fade_to(0.0, duration, easing)
+        outActionFn = function(s)
+            return anim.fadeTo(0.0, duration, easing)
         end,
-        in_action_fn = function(s)
+        inActionFn = function(s)
             s.root.alpha = 0
-            return anim.fade_to(1.0, duration, easing)
+            return anim.fadeTo(1.0, duration, easing)
         end,
     }
 end
@@ -58,22 +58,22 @@ end
 -- scene) up to full opacity, swaps the old/new scenes behind the
 -- black frame, then fades the overlay back down. Reliable across
 -- scenes that draw outside their root panel — the overlay covers
--- direct draw_region calls (menu backgrounds, blur layers) that
+-- direct drawRegion calls (menu backgrounds, blur layers) that
 -- root-alpha based fades miss entirely. Half duration is spent on
 -- each side of the swap.
 --
--- Uses the overlay_action_fn hook on scene.replace; the callback
+-- Uses the overlayActionFn hook on scene.replace; the callback
 -- argument is the scene-module's "swap now" closure that pops the
 -- old scene and pushes / enters the new one.
 
-function M.fade_through_black(duration, easing)
+function M.fadeThroughBlack(duration, easing)
     local half = duration * 0.5
     return {
-        overlay_action_fn = function(swap_scenes)
+        overlayActionFn = function(swapScenes)
             return anim.sequence{
-                anim.fade_to(1.0, half, easing),
-                anim.call(swap_scenes),
-                anim.fade_to(0.0, half, easing),
+                anim.fadeTo(1.0, half, easing),
+                anim.call(swapScenes),
+                anim.fadeTo(0.0, half, easing),
             }
         end,
     }
@@ -94,17 +94,17 @@ local SLIDE_FROM = {
 
 function M.slide(direction, duration, easing)
     return {
-        out_action_fn = function(s)
-            local vw, vh = view_size()
+        outActionFn = function(s)
+            local vw, vh = viewSize()
             local d = SLIDE_FROM[direction]
-            return anim.move_to(d[1] * vw, d[2] * vh, duration, easing)
+            return anim.moveTo(d[1] * vw, d[2] * vh, duration, easing)
         end,
-        in_action_fn = function(s)
-            local vw, vh = view_size()
+        inActionFn = function(s)
+            local vw, vh = viewSize()
             local d = SLIDE_FROM[direction]
             s.root.x = d[1] * vw
             s.root.y = d[2] * vh
-            return anim.move_to(0, 0, duration, easing)
+            return anim.moveTo(0, 0, duration, easing)
         end,
     }
 end
@@ -119,15 +119,15 @@ end
 
 function M.zoom(duration, easing)
     return {
-        out_action_fn = function(s)
-            return anim.fade_to(0.0, duration, easing)
+        outActionFn = function(s)
+            return anim.fadeTo(0.0, duration, easing)
         end,
-        in_action_fn = function(s)
+        inActionFn = function(s)
             s.root.alpha = 0
             s.root.scale = 0.92
             return anim.parallel{
-                anim.fade_to(1.0, duration, easing),
-                anim.scale_to(1.0, duration, easing or anim.ease_out_back),
+                anim.fadeTo(1.0, duration, easing),
+                anim.scaleTo(1.0, duration, easing or anim.easeOutBack),
             }
         end,
     }

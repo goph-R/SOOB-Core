@@ -1,8 +1,8 @@
 -- engine/animation.lua — composable per-widget action graphs.
 --
 -- Every widget can have ONE action attached via `widget.action`. The
--- ticker (anim.tick_action) walks the action each frame; when the
--- action completes, widget.action is cleared and widget:on_action_done()
+-- ticker (anim.tickAction) walks the action each frame; when the
+-- action completes, widget.action is cleared and widget:onActionDone()
 -- fires if defined.
 --
 -- Actions are plain tables with one method:
@@ -19,8 +19,8 @@
 --   anim.sequence{a, b, c, ...}   -- one after another
 --   anim.parallel{a, b, c, ...}   -- together; done when last finishes
 --
--- Leaves capture their start values on the first tick, so move_by /
--- fade_to / scale_to read whatever the widget's state was when the
+-- Leaves capture their start values on the first tick, so moveBy /
+-- fadeTo / scaleTo read whatever the widget's state was when the
 -- action ACTUALLY started — after any preceding delay or earlier
 -- sequence step has run.
 --
@@ -28,7 +28,7 @@
 -- share a single action between widgets. Build a fresh action per
 -- widget (factories are cheap — they just allocate a table).
 --
--- Cancel by writing `widget.action = nil`; on_action_done does NOT
+-- Cancel by writing `widget.action = nil`; onActionDone does NOT
 -- fire for cancellations (it's a "naturally completed" signal).
 
 local M = {}
@@ -36,13 +36,13 @@ local M = {}
 -- ---- Easings -----------------------------------------------------------
 --
 -- easing(t) where t and return value are both in [0, 1]. Pass any of
--- these as the `easing` argument of move_to / fade_to / scale_to /
--- tween_to / etc.; omit for linear.
+-- these as the `easing` argument of moveTo / fadeTo / scaleTo /
+-- tweenTo / etc.; omit for linear.
 
 M.linear      = function(t) return t end
-M.ease_in     = function(t) return t * t end
-M.ease_out    = function(t) local u = 1 - t; return 1 - u * u end
-M.ease_in_out = function(t)
+M.easeIn     = function(t) return t * t end
+M.easeOut    = function(t) local u = 1 - t; return 1 - u * u end
+M.easeInOut = function(t)
     if t < 0.5 then return 2 * t * t end
     local u = 1 - t
     return 1 - 2 * u * u
@@ -50,13 +50,13 @@ end
 
 -- Overshoots past 1, then settles — classic "pop in" feel.
 local BACK_S = 1.70158
-M.ease_out_back = function(t)
+M.easeOutBack = function(t)
     local u = t - 1
     return u * u * ((BACK_S + 1) * u + BACK_S) + 1
 end
 
 -- Penner-style bounce on the way OUT (lands and bounces).
-M.bounce_out = function(t)
+M.bounceOut = function(t)
     if t < 1 / 2.75 then
         return 7.5625 * t * t
     elseif t < 2 / 2.75 then
@@ -73,13 +73,13 @@ end
 
 -- Custom-curve factories — t^n. Use for cubic / quart / quint / etc.
 -- without us shipping a named function for each.
-function M.ease_in_pow(n)
+function M.easeInPow(n)
     return function(t) return t ^ n end
 end
-function M.ease_out_pow(n)
+function M.easeOutPow(n)
     return function(t) local u = 1 - t; return 1 - u ^ n end
 end
-function M.ease_in_out_pow(n)
+function M.easeInOutPow(n)
     return function(t)
         if t < 0.5 then return (2 ^ (n - 1)) * (t ^ n) end
         local u = 1 - t
@@ -91,16 +91,16 @@ end
 --
 -- Hosts (widget.panel, engine.scene) call this each frame. Advances
 -- widget.action by `dt`; when the action returns a leftover, it's
--- considered complete — widget.action is cleared and on_action_done
+-- considered complete — widget.action is cleared and onActionDone
 -- fires.
 
-function M.tick_action(widget, dt)
+function M.tickAction(widget, dt)
     local a = widget.action
     if not a then return end
     local leftover = a:update(widget, dt)
     if leftover ~= nil then
         widget.action = nil
-        if widget.on_action_done then widget:on_action_done() end
+        if widget.onActionDone then widget:onActionDone() end
     end
 end
 
@@ -108,7 +108,7 @@ end
 --
 -- Most leaves share the same shape: capture start state on tick 1,
 -- accumulate elapsed, lerp from start toward target via an easing,
--- return leftover on completion. make_tween factors that out so a
+-- return leftover on completion. makeTween factors that out so a
 -- leaf is one capture / apply / finish triple.
 
 local function lerp(a, b, t) return a + (b - a) * t end
@@ -119,7 +119,7 @@ local function lerp(a, b, t) return a + (b - a) * t end
 -- spec.apply     : fn(widget, start, k) where k is eased [0..1]
 -- spec.finish    : fn(widget, start) — called once at completion to
 --                  snap to the exact target (avoids float drift)
-local function make_tween(spec)
+local function makeTween(spec)
     local t = {
         duration = spec.duration,
         easing   = spec.easing or M.linear,
@@ -145,8 +145,8 @@ end
 
 -- ---- Leaves: position / opacity / scale --------------------------------
 
-function M.move_to(x, y, duration, easing)
-    return make_tween{
+function M.moveTo(x, y, duration, easing)
+    return makeTween{
         duration = duration, easing = easing,
         capture = function(w) return { x = w.x, y = w.y } end,
         apply   = function(w, s, k)
@@ -157,8 +157,8 @@ function M.move_to(x, y, duration, easing)
     }
 end
 
-function M.move_by(dx, dy, duration, easing)
-    return make_tween{
+function M.moveBy(dx, dy, duration, easing)
+    return makeTween{
         duration = duration, easing = easing,
         capture = function(w) return { x = w.x, y = w.y } end,
         apply   = function(w, s, k)
@@ -169,8 +169,8 @@ function M.move_by(dx, dy, duration, easing)
     }
 end
 
-function M.fade_to(alpha, duration, easing)
-    return make_tween{
+function M.fadeTo(alpha, duration, easing)
+    return makeTween{
         duration = duration, easing = easing,
         capture = function(w) return { a = w.alpha or 1.0 } end,
         apply   = function(w, s, k) w.alpha = lerp(s.a, alpha, k) end,
@@ -178,11 +178,11 @@ function M.fade_to(alpha, duration, easing)
     }
 end
 
-function M.fade_in (duration, easing) return M.fade_to(1.0, duration, easing) end
-function M.fade_out(duration, easing) return M.fade_to(0.0, duration, easing) end
+function M.fadeIn (duration, easing) return M.fadeTo(1.0, duration, easing) end
+function M.fadeOut(duration, easing) return M.fadeTo(0.0, duration, easing) end
 
-function M.scale_to(scale, duration, easing)
-    return make_tween{
+function M.scaleTo(scale, duration, easing)
+    return makeTween{
         duration = duration, easing = easing,
         capture = function(w) return { s = w.scale or 1.0 } end,
         apply   = function(w, s, k) w.scale = lerp(s.s, scale, k) end,
@@ -190,8 +190,8 @@ function M.scale_to(scale, duration, easing)
     }
 end
 
-function M.scale_by(factor, duration, easing)
-    return make_tween{
+function M.scaleBy(factor, duration, easing)
+    return makeTween{
         duration = duration, easing = easing,
         capture = function(w) return { s = w.scale or 1.0 } end,
         apply   = function(w, s, k) w.scale = s.s * (1 + (factor - 1) * k) end,
@@ -200,9 +200,9 @@ function M.scale_by(factor, duration, easing)
 end
 
 -- Generic numeric property tween — for less common fields not covered
--- by the named leaves (text_scale, custom widget fields, etc.).
-function M.tween_to(prop, value, duration, easing)
-    return make_tween{
+-- by the named leaves (textScale, custom widget fields, etc.).
+function M.tweenTo(prop, value, duration, easing)
+    return makeTween{
         duration = duration, easing = easing,
         capture = function(w) return { v = w[prop] or 0 } end,
         apply   = function(w, s, k) w[prop] = lerp(s.v, value, k) end,
@@ -275,12 +275,12 @@ function M.parallel(actions)
         _running  = {},
         _min_left = nil,
         update = function(self, widget, dt)
-            local any_running = false
+            local anyRunning = false
             for i, a in ipairs(self._actions) do
                 if self._running[i] ~= false then
                     local leftover = a:update(widget, dt)
                     if leftover == nil then
-                        any_running = true
+                        anyRunning = true
                     else
                         self._running[i] = false
                         if self._min_left == nil or leftover < self._min_left then
@@ -289,7 +289,7 @@ function M.parallel(actions)
                     end
                 end
             end
-            if any_running then return nil end
+            if anyRunning then return nil end
             return self._min_left or 0
         end,
     }

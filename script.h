@@ -64,7 +64,7 @@ static int scr_ui_show_message(lua_State *L)
 
 /* snd_play(name) — head-relative playback. Silently warns and returns if
    the name isn't registered. */
-static int scr_snd_play(lua_State *L)
+static int scr_sound_play(lua_State *L)
 {
     lua_getfield(L, LUA_REGISTRYINDEX, "engine.sys");
     ScriptSystem *s = (ScriptSystem *)lua_touserdata(L, -1);
@@ -73,7 +73,7 @@ static int scr_snd_play(lua_State *L)
     const char *name = luaL_checkstring(L, 1);
     SoundBuffer b = sndLibPick(s->sndLib, name);
     if (!b) {
-        conLogf("snd_play: unknown sound '%s'\n", name);
+        conLogf("soundPlay: unknown sound '%s'\n", name);
         return 0;
     }
     sndPlay(s->snd, b);
@@ -308,30 +308,30 @@ static int scr_draw_region(lua_State *L)
         /* Options-table form */
         align = scr_optfield_int(L, 4, "align", 0);
         flip  = scr_optfield_int(L, 4, "flip",  0);
-        fx    = scr_optfield_num(L, 4, "fill_x", 1.0f);
-        fy    = scr_optfield_num(L, 4, "fill_y", 1.0f);
+        fx    = scr_optfield_num(L, 4, "fillX", 1.0f);
+        fy    = scr_optfield_num(L, 4, "fillY", 1.0f);
         float uniform = scr_optfield_num(L, 4, "scale", 1.0f);
-        sx_   = scr_optfield_num(L, 4, "scale_x", uniform);
-        sy_   = scr_optfield_num(L, 4, "scale_y", uniform);
+        sx_   = scr_optfield_num(L, 4, "scaleX", uniform);
+        sy_   = scr_optfield_num(L, 4, "scaleY", uniform);
         scr_optfield_color(L, 4, &cr_, &cg_, &cb_, &ca_);
 
-        lua_getfield(L, 4, "src_x");
+        lua_getfield(L, 4, "srcX");
         if (!lua_isnil(L, -1)) { src_x_ovr = (int)lua_tointeger(L, -1); has_src |= 1; }
         lua_pop(L, 1);
-        lua_getfield(L, 4, "src_y");
+        lua_getfield(L, 4, "srcY");
         if (!lua_isnil(L, -1)) { src_y_ovr = (int)lua_tointeger(L, -1); has_src |= 2; }
         lua_pop(L, 1);
-        lua_getfield(L, 4, "src_w");
+        lua_getfield(L, 4, "srcW");
         if (!lua_isnil(L, -1)) { src_w_ovr = (int)lua_tointeger(L, -1); has_src |= 4; }
         lua_pop(L, 1);
-        lua_getfield(L, 4, "src_h");
+        lua_getfield(L, 4, "srcH");
         if (!lua_isnil(L, -1)) { src_h_ovr = (int)lua_tointeger(L, -1); has_src |= 8; }
         lua_pop(L, 1);
 
-        lua_getfield(L, 4, "dst_w");
+        lua_getfield(L, 4, "dstW");
         if (!lua_isnil(L, -1)) { dst_w_ovr = (float)lua_tonumber(L, -1); has_dst_w = 1; }
         lua_pop(L, 1);
-        lua_getfield(L, 4, "dst_h");
+        lua_getfield(L, 4, "dstH");
         if (!lua_isnil(L, -1)) { dst_h_ovr = (float)lua_tonumber(L, -1); has_dst_h = 1; }
         lua_pop(L, 1);
     } else {
@@ -344,7 +344,7 @@ static int scr_draw_region(lua_State *L)
 
     const Region *rg = assetRegFindRegion(s->assets, name);
     if (!rg) {
-        conLogf("draw_region: unknown region '%s'\n", name);
+        conLogf("drawRegion: unknown region '%s'\n", name);
         return 0;
     }
 
@@ -656,7 +656,7 @@ static int scr_draw_bg(lua_State *L)
     const char *name = luaL_checkstring(L, 1);
     const Region *rg = assetRegFindRegion(s->assets, name);
     if (!rg) {
-        conLogf("draw_bg: unknown region '%s'\n", name);
+        conLogf("drawBg: unknown region '%s'\n", name);
         return 0;
     }
     const char *texPath = assetRegResolveTexture(s->assets, rg->texName);
@@ -718,7 +718,7 @@ static int scr_draw_blur(lua_State *L)
 
     const Region *rg = assetRegFindRegion(s->assets, name);
     if (!rg) {
-        conLogf("draw_blur: unknown region '%s'\n", name);
+        conLogf("drawBlur: unknown region '%s'\n", name);
         return 0;
     }
     const char *texPath = assetRegResolveTexture(s->assets, rg->texName);
@@ -984,7 +984,7 @@ static int scr_opt_save(lua_State *L)
 
     FILE *f = fopen(tmpFile, "wb");
     if (!f) {
-        conLogf("opt_save: cannot open %s for writing\n", tmpFile);
+        conLogf("optSave: cannot open %s for writing\n", tmpFile);
         lua_pushboolean(L, 0);
         return 1;
     }
@@ -998,7 +998,7 @@ static int scr_opt_save(lua_State *L)
     /* Windows rename() fails if the target already exists; remove first. */
     remove(optFile);
     if (rename(tmpFile, optFile) != 0) {
-        conLogf("opt_save: rename %s -> %s failed\n", tmpFile, optFile);
+        conLogf("optSave: rename %s -> %s failed\n", tmpFile, optFile);
         lua_pushboolean(L, 0);
         return 1;
     }
@@ -1189,28 +1189,28 @@ static int scriptInit(ScriptSystem *s, UiState *ui, SoundSystem *snd,
     lua_pushlightuserdata(s->L, s);
     lua_setfield(s->L, LUA_REGISTRYINDEX, "engine.sys");
 
-    lua_register(s->L, "ui_show_message", scr_ui_show_message);
-    lua_register(s->L, "snd_play",        scr_snd_play);
-    lua_register(s->L, "music_play",      scr_music_play);
-    lua_register(s->L, "music_stop",      scr_music_stop);
-    lua_register(s->L, "music_volume",    scr_music_volume);
+    lua_register(s->L, "uiShowMessage", scr_ui_show_message);
+    lua_register(s->L, "soundPlay",        scr_sound_play);
+    lua_register(s->L, "musicPlay",      scr_music_play);
+    lua_register(s->L, "musicStop",      scr_music_stop);
+    lua_register(s->L, "musicVolume",    scr_music_volume);
     lua_register(s->L, "key_down",        scr_key_down);
     lua_register(s->L, "mouse_pos",       scr_mouse_pos);
     lua_register(s->L, "mouse_down",      scr_mouse_down);
     lua_register(s->L, "key_modifiers",   scr_key_modifiers);
-    lua_register(s->L, "draw_region",     scr_draw_region);
-    lua_register(s->L, "draw_text",       scr_draw_text);
-    lua_register(s->L, "text_width",      scr_text_width);
-    lua_register(s->L, "draw_ellipse",    scr_draw_ellipse);
-    lua_register(s->L, "draw_quad",       scr_draw_quad);
-    lua_register(s->L, "draw_bg",         scr_draw_bg);
-    lua_register(s->L, "draw_blur",       scr_draw_blur);
-    lua_register(s->L, "view_size",       scr_view_size);
-    lua_register(s->L, "region_slice",    scr_region_slice);
-    lua_register(s->L, "region_size",     scr_region_size);
-    lua_register(s->L, "opt_set",         scr_opt_set);
-    lua_register(s->L, "opt_get",         scr_opt_get);
-    lua_register(s->L, "opt_save",        scr_opt_save);
+    lua_register(s->L, "drawRegion",     scr_draw_region);
+    lua_register(s->L, "drawText",       scr_draw_text);
+    lua_register(s->L, "textWidth",      scr_text_width);
+    lua_register(s->L, "drawEllipse",    scr_draw_ellipse);
+    lua_register(s->L, "drawQuad",       scr_draw_quad);
+    lua_register(s->L, "drawBg",         scr_draw_bg);
+    lua_register(s->L, "drawBlur",       scr_draw_blur);
+    lua_register(s->L, "viewSize",       scr_view_size);
+    lua_register(s->L, "regionSlice",    scr_region_slice);
+    lua_register(s->L, "regionSize",     scr_region_size);
+    lua_register(s->L, "optSet",         scr_opt_set);
+    lua_register(s->L, "optGet",         scr_opt_get);
+    lua_register(s->L, "optSave",        scr_opt_save);
     lua_register(s->L, "opt_load",        scr_opt_load);
 
     /* Auto-load s->optFile on init so options are ready before the
@@ -1533,23 +1533,23 @@ static void scriptEndHook(ScriptSystem *s, const char *fn, int nargs)
 
 static void scriptCallUpdate(ScriptSystem *s, float dt)
 {
-    if (!scriptBeginHook(s, "on_update")) return;
+    if (!scriptBeginHook(s, "onUpdate")) return;
     lua_pushnumber(s->L, dt);
-    scriptEndHook(s, "on_update", 1);
+    scriptEndHook(s, "onUpdate", 1);
 }
 
 static void scriptCallKeyDown(ScriptSystem *s, const char *name)
 {
-    if (!scriptBeginHook(s, "on_keydown")) return;
+    if (!scriptBeginHook(s, "onKeydown")) return;
     lua_pushstring(s->L, name);
-    scriptEndHook(s, "on_keydown", 1);
+    scriptEndHook(s, "onKeydown", 1);
 }
 
 static void scriptCallKeyUp(ScriptSystem *s, const char *name)
 {
-    if (!scriptBeginHook(s, "on_keyup")) return;
+    if (!scriptBeginHook(s, "onKeyup")) return;
     lua_pushstring(s->L, name);
-    scriptEndHook(s, "on_keyup", 1);
+    scriptEndHook(s, "onKeyup", 1);
 }
 
 /* on_textinput(char) — printable character produced by a keypress.
@@ -1561,45 +1561,45 @@ static void scriptCallKeyUp(ScriptSystem *s, const char *name)
  * called at SDL init (both Find5 and SDLFun already do this). */
 static void scriptCallTextInput(ScriptSystem *s, const char *ch)
 {
-    if (!scriptBeginHook(s, "on_textinput")) return;
+    if (!scriptBeginHook(s, "onTextinput")) return;
     lua_pushstring(s->L, ch);
-    scriptEndHook(s, "on_textinput", 1);
+    scriptEndHook(s, "onTextinput", 1);
 }
 
 static void scriptCallMouseDown(ScriptSystem *s, float x, float y, int button)
 {
-    if (!scriptBeginHook(s, "on_mousedown")) return;
+    if (!scriptBeginHook(s, "onMousedown")) return;
     lua_pushnumber(s->L, x);
     lua_pushnumber(s->L, y);
     lua_pushinteger(s->L, button);
-    scriptEndHook(s, "on_mousedown", 3);
+    scriptEndHook(s, "onMousedown", 3);
 }
 
 static void scriptCallMouseUp(ScriptSystem *s, float x, float y, int button)
 {
-    if (!scriptBeginHook(s, "on_mouseup")) return;
+    if (!scriptBeginHook(s, "onMouseup")) return;
     lua_pushnumber(s->L, x);
     lua_pushnumber(s->L, y);
     lua_pushinteger(s->L, button);
-    scriptEndHook(s, "on_mouseup", 3);
+    scriptEndHook(s, "onMouseup", 3);
 }
 
 static void scriptCallMouseMove(ScriptSystem *s, float x, float y, float dx, float dy)
 {
-    if (!scriptBeginHook(s, "on_mousemove")) return;
+    if (!scriptBeginHook(s, "onMousemove")) return;
     lua_pushnumber(s->L, x);
     lua_pushnumber(s->L, y);
     lua_pushnumber(s->L, dx);
     lua_pushnumber(s->L, dy);
-    scriptEndHook(s, "on_mousemove", 4);
+    scriptEndHook(s, "onMousemove", 4);
 }
 
 /* Called inside uiBegin/uiEnd — game scripts use draw_sprite, uiText
    (via future bindings), etc. to render. */
 static void scriptCallRender(ScriptSystem *s)
 {
-    if (!scriptBeginHook(s, "on_render")) return;
-    scriptEndHook(s, "on_render", 0);
+    if (!scriptBeginHook(s, "onRender")) return;
+    scriptEndHook(s, "onRender", 0);
 }
 
 #endif /* SCRIPT_H */
