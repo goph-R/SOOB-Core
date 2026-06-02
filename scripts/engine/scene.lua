@@ -17,17 +17,17 @@
 --                                    you started, free resources)
 --   update(self, dt)                 per-frame logic — top scene only
 --   render(self)                     per-frame draw — see "rendering"
---   keydown(self, name)              "escape", "return", "a", etc.
---   keyup(self, name)
---   mousedown(self, x, y, button)    virtual-canvas coords
---   mouseup(self, x, y, button)
---   mousemove(self, x, y, dx, dy)
+--   keyDown(self, name)              "escape", "return", "a", etc.
+--   keyUp(self, name)
+--   mouseDown(self, x, y, button)    virtual-canvas coords
+--   mouseUp(self, x, y, button)
+--   mouseMove(self, x, y, dx, dy)
 --   root (widget.panel)              auto-forward target (see below)
 --   transparent (boolean)            see "rendering"
 --
 -- Methods are called with the scene table as `self` (use `:` syntax
 -- when defining them). Missing methods are no-ops — except update /
--- render / keydown / mousedown / mouseup / mousemove, which auto-
+-- render / keyDown / mouseDown / mouseUp / mouseMove, which auto-
 -- forward to `self.root` when the scene defines no override. So a
 -- scene that just wants to host widgets can set `root = widget.panel
 -- ({...})` and skip all the per-method boilerplate; one that wants to
@@ -47,11 +47,11 @@
 --   local scene = require "engine.scene"
 --   function onUpdate(dt)    scene.dispatchUpdate(dt)        end
 --   function onRender()       scene.dispatchRender()           end
---   function onKeydown(n)     scene.dispatchKeydown(n)         end
---   function onKeyup(n)       scene.dispatchKeyup(n)           end
---   function onMousedown(x,y,b)   scene.dispatchMousedown(x,y,b)    end
---   function onMouseup(x,y,b)     scene.dispatchMouseup(x,y,b)      end
---   function onMousemove(x,y,dx,dy) scene.dispatchMousemove(x,y,dx,dy) end
+--   function onKeyDown(n)     scene.dispatchKeyDown(n)         end
+--   function onKeyUp(n)       scene.dispatchKeyUp(n)           end
+--   function onMouseDown(x,y,b)   scene.dispatchMouseDown(x,y,b)    end
+--   function onMouseUp(x,y,b)     scene.dispatchMouseUp(x,y,b)      end
+--   function onMouseMove(x,y,dx,dy) scene.dispatchMouseMove(x,y,dx,dy) end
 --
 -- Option B (convenience, no extra logic in your hooks):
 --   require("engine.scene").installHooks(_G)
@@ -319,50 +319,50 @@ end
 -- Input dispatchers short-circuit while a transition is in flight so
 -- stray clicks / keypresses don't land on half-faded buttons.
 
-function M.dispatchKeydown(name)
+function M.dispatchKeyDown(name)
     if inTransition then return end
     local t = top()
     if not t then return end
-    if t.keydown then t:keydown(name)
-    elseif t.root and t.root.keydown then t.root:keydown(name) end
+    if t.keyDown then t:keyDown(name)
+    elseif t.root and t.root.keyDown then t.root:keyDown(name) end
 end
 
-function M.dispatchTextinput(char)
+function M.dispatchTextInput(char)
     if inTransition then return end
     local t = top()
     if not t then return end
-    if t.textinput then t:textinput(char)
-    elseif t.root and t.root.textinput then t.root:textinput(char) end
+    if t.textInput then t:textInput(char)
+    elseif t.root and t.root.textInput then t.root:textInput(char) end
 end
 
-function M.dispatchKeyup(name)
+function M.dispatchKeyUp(name)
     if inTransition then return end
     local t = top()
-    if t and t.keyup then t:keyup(name) end
+    if t and t.keyUp then t:keyUp(name) end
 end
 
-function M.dispatchMousedown(x, y, button)
-    if inTransition then return end
-    local t = top()
-    if not t then return end
-    if t.mousedown then t:mousedown(x, y, button)
-    elseif t.root and t.root.mousedown then t.root:mousedown(x, y, button) end
-end
-
-function M.dispatchMouseup(x, y, button)
+function M.dispatchMouseDown(x, y, button)
     if inTransition then return end
     local t = top()
     if not t then return end
-    if t.mouseup then t:mouseup(x, y, button)
-    elseif t.root and t.root.mouseup then t.root:mouseup(x, y, button) end
+    if t.mouseDown then t:mouseDown(x, y, button)
+    elseif t.root and t.root.mouseDown then t.root:mouseDown(x, y, button) end
 end
 
-function M.dispatchMousemove(x, y, dx, dy)
+function M.dispatchMouseUp(x, y, button)
     if inTransition then return end
     local t = top()
     if not t then return end
-    if t.mousemove then t:mousemove(x, y, dx, dy)
-    elseif t.root and t.root.mousemove then t.root:mousemove(x, y, dx, dy) end
+    if t.mouseUp then t:mouseUp(x, y, button)
+    elseif t.root and t.root.mouseUp then t.root:mouseUp(x, y, button) end
+end
+
+function M.dispatchMouseMove(x, y, dx, dy)
+    if inTransition then return end
+    local t = top()
+    if not t then return end
+    if t.mouseMove then t:mouseMove(x, y, dx, dy)
+    elseif t.root and t.root.mouseMove then t.root:mouseMove(x, y, dx, dy) end
 end
 
 -- ---- Hook installation ------------------------------------------------
@@ -375,13 +375,13 @@ function M.installHooks(env)
     env = env or _G
     env.onUpdate    = function(dt)     M.dispatchUpdate(dt)    end
     env.onRender    = function()        M.dispatchRender()      end
-    env.onKeydown   = function(name)    M.dispatchKeydown(name) end
-    env.onKeyup     = function(name)    M.dispatchKeyup(name)   end
-    env.onTextinput = function(ch)      M.dispatchTextinput(ch) end
-    env.onMousedown = function(x, y, b) M.dispatchMousedown(x, y, b) end
-    env.onMouseup   = function(x, y, b) M.dispatchMouseup(x, y, b)   end
-    env.onMousemove = function(x, y, dx, dy)
-        M.dispatchMousemove(x, y, dx, dy)
+    env.onKeyDown   = function(name)    M.dispatchKeyDown(name) end
+    env.onKeyUp     = function(name)    M.dispatchKeyUp(name)   end
+    env.onTextInput = function(ch)      M.dispatchTextInput(ch) end
+    env.onMouseDown = function(x, y, b) M.dispatchMouseDown(x, y, b) end
+    env.onMouseUp   = function(x, y, b) M.dispatchMouseUp(x, y, b)   end
+    env.onMouseMove = function(x, y, dx, dy)
+        M.dispatchMouseMove(x, y, dx, dy)
     end
 end
 

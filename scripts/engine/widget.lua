@@ -1,8 +1,8 @@
 -- engine/widget.lua — declarative UI widgets on top of the engine bindings.
 --
 -- A widget is a plain Lua table with x / y / width / height + a few
--- methods (draw / hit / mousedown / mouseup / mousemove / keydown /
--- keyup). Constructors live in this module:
+-- methods (draw / hit / mouseDown / mouseUp / mouseMove / keyDown /
+-- keyUp). Constructors live in this module:
 --
 --   widget.label(spec)    -- text in a bbox
 --   widget.image(spec)    -- static region (logo, decoration) — alpha/
@@ -16,7 +16,7 @@
 -- module stays unaware of engine.scene so widgets can be used inside
 -- any rendering context.
 --
--- Spatial cursor navigation: when the focused widget's `keydown(name)`
+-- Spatial cursor navigation: when the focused widget's `keyDown(name)`
 -- returns false for "up" / "down" / "left" / "right", the scene calls
 -- widget.focusDirection(widgets, current, name) to move focus to the
 -- nearest enabled focusable widget in that direction. Tab navigation
@@ -230,11 +230,11 @@ function M.label(spec)
     end
 
     function w:hit() return false end
-    function w:mousedown() return false end
-    function w:mouseup()   return false end
-    function w:mousemove() end
-    function w:keydown()   return false end
-    function w:keyup()     return false end
+    function w:mouseDown() return false end
+    function w:mouseUp()   return false end
+    function w:mouseMove() end
+    function w:keyDown()   return false end
+    function w:keyUp()     return false end
 
     return w
 end
@@ -331,11 +331,11 @@ function M.image(spec)
         return rectContains(self.x, self.y, self.width, self.height, px, py)
     end
 
-    function w:mousedown() return false end
-    function w:mouseup()   return false end
-    function w:mousemove() end
-    function w:keydown()   return false end
-    function w:keyup()     return false end
+    function w:mouseDown() return false end
+    function w:mouseUp()   return false end
+    function w:mouseMove() end
+    function w:keyDown()   return false end
+    function w:keyUp()     return false end
 
     return w
 end
@@ -534,7 +534,7 @@ function M.button(spec)
         return rectContains(self.x, self.y, self.width, self.height, px, py)
     end
 
-    function w:mousedown(px, py, button)
+    function w:mouseDown(px, py, button)
         if self.disabled or button ~= 1 or not self:hit(px, py) then
             return false
         end
@@ -542,7 +542,7 @@ function M.button(spec)
         return true
     end
 
-    function w:mouseup(px, py, button)
+    function w:mouseUp(px, py, button)
         local wasPressed = self._pressed
         self._pressed = false
         if self.disabled or button ~= 1 then return false end
@@ -553,12 +553,12 @@ function M.button(spec)
         return false
     end
 
-    function w:mousemove(px, py)
+    function w:mouseMove(px, py)
         if self.disabled then self._hover = false; return end
         self._hover = self:hit(px, py)
     end
 
-    function w:keydown(name)
+    function w:keyDown(name)
         if self.disabled or not self.focused then return false end
         if name == "return" or name == "space" then
             if self.onClick then self:onClick() end
@@ -567,7 +567,7 @@ function M.button(spec)
         return false
     end
 
-    function w:keyup() return false end
+    function w:keyUp() return false end
 
     return w
 end
@@ -708,13 +708,13 @@ function M.checkbox(spec)
         if self.onChange then self:onChange(self.value) end
     end
 
-    function w:mousedown(px, py, button)
+    function w:mouseDown(px, py, button)
         if self.disabled or button ~= 1 or not self:hit(px, py) then return false end
         self._pressed = true
         return true
     end
 
-    function w:mouseup(px, py, button)
+    function w:mouseUp(px, py, button)
         local was = self._pressed
         self._pressed = false
         if self.disabled or button ~= 1 then return false end
@@ -725,9 +725,9 @@ function M.checkbox(spec)
         return false
     end
 
-    function w:mousemove() end
+    function w:mouseMove() end
 
-    function w:keydown(name)
+    function w:keyDown(name)
         if self.disabled or not self.focused then return false end
         if name == "space" or name == "return" then
             toggle(self)
@@ -736,7 +736,7 @@ function M.checkbox(spec)
         return false
     end
 
-    function w:keyup() return false end
+    function w:keyUp() return false end
 
     return w
 end
@@ -900,27 +900,27 @@ function M.slider(spec)
         return rectContains(self.x, self.y, self.width, self.height, px, py)
     end
 
-    function w:mousedown(px, py, button)
+    function w:mouseDown(px, py, button)
         if self.disabled or button ~= 1 or not self:hit(px, py) then return false end
         self._dragging = true
         setValue(self, posToValue(self, px, py))
         return true
     end
 
-    function w:mouseup(px, py, button)
+    function w:mouseUp(px, py, button)
         if button ~= 1 then return false end
         local was = self._dragging
         self._dragging = false
         return was
     end
 
-    function w:mousemove(px, py)
+    function w:mouseMove(px, py)
         if self._dragging then
             setValue(self, posToValue(self, px, py))
         end
     end
 
-    function w:keydown(name)
+    function w:keyDown(name)
         if self.disabled or not self.focused then return false end
         local sign
         if self.orientation == "vertical" then
@@ -937,7 +937,7 @@ function M.slider(spec)
         return true
     end
 
-    function w:keyup() return false end
+    function w:keyUp() return false end
 
     return w
 end
@@ -966,9 +966,9 @@ end
 -- tick the blink phase; widget.dispatchUpdate(widgets, dt) ticks
 -- every widget in a list.
 --
--- Convention (per scripts/engine/scene.lua's onTextinput hook):
+-- Convention (per scripts/engine/scene.lua's onTextInput hook):
 -- navigation keys (Left/Right/Home/End/Backspace/Delete/Return)
--- handle in keydown; character insertion is in textinput.
+-- handle in keyDown; character insertion is in textInput.
 
 local function lePad(specPad)
     local p = specPad or {}
@@ -1134,17 +1134,17 @@ function M.lineEdit(spec)
         return rectContains(self.x, self.y, self.width, self.height, px, py)
     end
 
-    function w:mousedown(px, py, button)
+    function w:mouseDown(px, py, button)
         if self.disabled or button ~= 1 or not self:hit(px, py) then return false end
         self.cursor = cursorFromX(self, px)
         self._blink_t = 0   -- re-show cursor immediately on click
         return true
     end
 
-    function w:mouseup() return false end
-    function w:mousemove() end
+    function w:mouseUp() return false end
+    function w:mouseMove() end
 
-    function w:textinput(ch)
+    function w:textInput(ch)
         if self.disabled or not self.focused then return end
         if not ch or ch == "" then return end
         if self.maxLength and #self.text >= self.maxLength then return end
@@ -1156,7 +1156,7 @@ function M.lineEdit(spec)
         emitChange(self)
     end
 
-    function w:keydown(name)
+    function w:keyDown(name)
         if self.disabled or not self.focused then return false end
 
         if name == "backspace" then
@@ -1201,7 +1201,7 @@ function M.lineEdit(spec)
         return false   -- Tab / Esc / other keys fall through to scene
     end
 
-    function w:keyup() return false end
+    function w:keyUp() return false end
 
     return w
 end
@@ -1222,16 +1222,16 @@ end
 --                           child, it claims focus
 --   :draw                   offsets children by (x, y) then delegates
 --   :hit(px, py)            panel's own bbox (used when nested)
---   :mousedown/up/move      translate to local coords, fan out;
---                           mousedown also runs click-to-focus
---   :update / :keydown      fan out; keydown uses dispatchKeydown
+--   :mouseDown/up/move      translate to local coords, fan out;
+--                           mouseDown also runs click-to-focus
+--   :update / :keyDown      fan out; keyDown uses dispatchKeyDown
 --                           over children (focused-child first, then
 --                           Tab / spatial nav within this panel)
 --
 -- Nesting: a child may itself be a panel. Mouse events keep translating
 -- as they descend, draw recurses. Keyboard focus is owned per-panel:
 -- when a click lands inside a child panel, this panel's focusedChild
--- points at that child panel so keydown forwards into it.
+-- points at that child panel so keyDown forwards into it.
 --
 -- alpha multiplies into every child's alpha during draw, so a fade on
 -- the panel cascades through nested panels and leaf widgets uniformly.
@@ -1297,7 +1297,7 @@ function M.panel(spec)
         self.focusedChild = c
     end
 
-    function p:mousedown(px, py, button)
+    function p:mouseDown(px, py, button)
         if not self.visible then return end
         local lx, ly = px - self.x, py - self.y
         if button == 1 then
@@ -1316,28 +1316,28 @@ function M.panel(spec)
             end
         end
         for _, c in ipairs(self.children) do
-            if c.visible ~= false and c.mousedown then
-                c:mousedown(lx, ly, button)
+            if c.visible ~= false and c.mouseDown then
+                c:mouseDown(lx, ly, button)
             end
         end
     end
 
-    function p:mouseup(px, py, button)
+    function p:mouseUp(px, py, button)
         if not self.visible then return end
         local lx, ly = px - self.x, py - self.y
         for _, c in ipairs(self.children) do
-            if c.visible ~= false and c.mouseup then
-                c:mouseup(lx, ly, button)
+            if c.visible ~= false and c.mouseUp then
+                c:mouseUp(lx, ly, button)
             end
         end
     end
 
-    function p:mousemove(px, py, dx, dy)
+    function p:mouseMove(px, py, dx, dy)
         if not self.visible then return end
         local lx, ly = px - self.x, py - self.y
         for _, c in ipairs(self.children) do
-            if c.visible ~= false and c.mousemove then
-                c:mousemove(lx, ly, dx, dy)
+            if c.visible ~= false and c.mouseMove then
+                c:mouseMove(lx, ly, dx, dy)
             end
         end
     end
@@ -1350,22 +1350,22 @@ function M.panel(spec)
         end
     end
 
-    function p:keydown(name)
+    function p:keyDown(name)
         if not self.visible or self.disabled then return false end
-        local nextFocus = M.dispatchKeydown(
+        local nextFocus = M.dispatchKeyDown(
             self.children, self.focusedChild, name)
         if nextFocus then self.focusedChild = nextFocus end
         return false
     end
 
-    function p:keyup() return false end
+    function p:keyUp() return false end
 
-    -- Only the focused leaf cares about textinput. Fan-out doesn't make
+    -- Only the focused leaf cares about textInput. Fan-out doesn't make
     -- sense here (a single character would land in every lineEdit).
-    function p:textinput(ch)
+    function p:textInput(ch)
         if not self.visible then return end
         local fc = self.focusedChild
-        if fc and fc.textinput then fc:textinput(ch) end
+        if fc and fc.textInput then fc:textInput(ch) end
     end
 
     return p
@@ -1486,10 +1486,10 @@ end
 -- widget didn't consume it, try Tab / cursor-key navigation. Returns
 -- the (possibly-updated) focused widget. Pattern:
 --
---   self.focused_widget = widget.dispatchKeydown(self.widgets,
+--   self.focused_widget = widget.dispatchKeyDown(self.widgets,
 --                                                 self.focused_widget, name)
-function M.dispatchKeydown(widgets, current, name)
-    if current and current.keydown and current:keydown(name) then
+function M.dispatchKeyDown(widgets, current, name)
+    if current and current.keyDown and current:keyDown(name) then
         return current
     end
     local nextW

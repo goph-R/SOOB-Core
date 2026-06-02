@@ -134,7 +134,7 @@ static int assetRegAddRegion(AssetRegistry *r, const char *name, const char *tex
 }
 
 /* Attach 9-patch slice metadata to the most recently added region. Called by
-   scr_walkRegionsTable after assetRegAddRegion when the assets.lua entry has
+   scrWalkRegionsTable after assetRegAddRegion when the assets.lua entry has
    an optional `slice = { x1, x2, y1, y2 }` table. No-op if the region wasn't
    just added (regionCount == 0). */
 static void assetRegSetLastRegionSlice(AssetRegistry *r,
