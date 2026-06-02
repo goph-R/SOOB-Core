@@ -30,13 +30,24 @@ local musicOn = optGet("music_on")   -- camelCase local, snake_case option key
 `assets.lua` is a pure data manifest: keys (asset IDs) and value strings
 (paths) stay snake_case; only its comments use camelCase API names.
 
+**Compound event names are fully humped** — the SDL input events are
+camelCased all the way through, not left as one lump. The global hooks are
+`onMouseDown` / `onMouseUp` / `onMouseMove` / `onKeyDown` / `onKeyUp` /
+`onTextInput` (not `onMousedown`); their scene-method counterparts are
+`scene:mouseDown(x, y, b)` / `:keyDown(name)` / `:mouseMove(...)`; the
+dispatchers are `dispatchMouseMove` etc. The C hook-dispatch strings
+(`scriptBeginHook(s, "onKeyDown")`) move in lockstep with these Lua globals.
+(`onUpdate` / `onRender` / `onClick` are single words — already trivially
+camelCase.)
+
 ## Lua <-> C binding (keep in lockstep)
 
-A C function is exposed to Lua under a **camelCase** name while the C
-function itself keeps its `scr_` snake_case name:
+A C function is exposed to Lua under a **camelCase** name; the C wrapper
+itself is named `scrCamelCase` — the registered stem with an `scr` prefix
+(`scrDrawText`, `scrKeyDown`, `scrWalkRegionsTable`):
 
 ```c
-lua_register(L, "drawText", scr_draw_text);
+lua_register(L, "drawText", scrDrawText);
 ```
 
 Renaming a bound name means changing the `lua_register` / `lua_getfield`

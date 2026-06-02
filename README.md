@@ -49,10 +49,11 @@ Case depends on *where the name sits*, not what it means:
 - **UPPER_SNAKE_CASE** — constants (`ALIGN_CENTER`); **CamelCase** — classes.
 
 So one logical name may appear in two casings by role, e.g.
-`local musicOn = optGet("music_on")`. C bindings expose a camelCase name
-(`lua_register(L, "drawText", scr_draw_text)`) while the C function keeps
-its `scr_` name; rename both sides together. See `CLAUDE.md` for the full
-rule.
+`local musicOn = optGet("music_on")`. Compound event names are fully humped
+(`onMouseDown`, `onKeyDown`, scene `:mouseDown`). C bindings expose a
+camelCase name (`lua_register(L, "drawText", scrDrawText)`) while the C
+wrapper is named `scrCamelCase`; rename both sides together. See `CLAUDE.md`
+for the full rule.
 
 ## Constraints
 
