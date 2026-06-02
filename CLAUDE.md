@@ -30,15 +30,23 @@ local musicOn = optGet("music_on")   -- camelCase local, snake_case option key
 `assets.lua` is a pure data manifest: keys (asset IDs) and value strings
 (paths) stay snake_case; only its comments use camelCase API names.
 
-**Compound event names are fully humped** — the SDL input events are
-camelCased all the way through, not left as one lump. The global hooks are
-`onMouseDown` / `onMouseUp` / `onMouseMove` / `onKeyDown` / `onKeyUp` /
-`onTextInput` (not `onMousedown`); their scene-method counterparts are
-`scene:mouseDown(x, y, b)` / `:keyDown(name)` / `:mouseMove(...)`; the
-dispatchers are `dispatchMouseMove` etc. The C hook-dispatch strings
-(`scriptBeginHook(s, "onKeyDown")`) move in lockstep with these Lua globals.
-(`onUpdate` / `onRender` / `onClick` are single words — already trivially
-camelCase.)
+**Event hooks follow one rule, single- or multi-word alike.** A global hook
+is `on` + the CamelCase event name; multi-word events are humped through, not
+left as one lump:
+
+```
+onStart  onUpdate  onRender              -- lifecycle (single word)
+onMouseDown  onMouseUp  onMouseMove      -- input (compound, humped)
+onKeyDown  onKeyUp  onTextInput
+```
+
+The scene-method counterpart is the same event name with the `on` dropped:
+`scene:update(dt)` / `:render()` / `:mouseDown(x, y, b)` / `:keyDown(name)` /
+`:textInput(ch)`, routed by the `dispatchUpdate` / `dispatchMouseMove` / …
+helpers. The C hook-dispatch strings (`scriptBeginHook(s, "onKeyDown")`) move
+in lockstep with these Lua globals — so `onUpdate` and `onMouseDown` are named,
+dispatched, and bound exactly the same way; the only difference is how many
+words the event has.
 
 ## Lua <-> C binding (keep in lockstep)
 
