@@ -624,6 +624,35 @@ static void uiIconUVColor(UiRect r, GLuint tex,
     glDisable(GL_TEXTURE_2D);
 }
 
+/* Same as uiIconUVColor but rotates the quad by `angle` radians about its
+   own center. Used for spinning sprites (drawRegion's `rotation` option). */
+static void uiIconUVColorRot(UiRect r, GLuint tex,
+                             float u0, float v0, float u1, float v1,
+                             float cr, float cg, float cb, float ca,
+                             float angle)
+{
+    float cx = r.x + r.w * 0.5f;
+    float cy = r.y + r.h * 0.5f;
+    float hw = r.w * 0.5f, hh = r.h * 0.5f;
+    float s  = sinf(angle), c = cosf(angle);
+    /* corners (TL, TR, BR, BL) relative to center, with matching UVs */
+    float ox[4] = { -hw,  hw,  hw, -hw };
+    float oy[4] = { -hh, -hh,  hh,  hh };
+    float us[4] = {  u0,  u1,  u1,  u0 };
+    float vs[4] = {  v0,  v0,  v1,  v1 };
+    glEnable(GL_TEXTURE_2D);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glColor4f(cr, cg, cb, ca);
+    glBegin(GL_QUADS);
+    for (int i = 0; i < 4; i++) {
+        glTexCoord2f(us[i], vs[i]);
+        glVertex2f(cx + ox[i] * c - oy[i] * s,
+                   cy + ox[i] * s + oy[i] * c);
+    }
+    glEnd();
+    glDisable(GL_TEXTURE_2D);
+}
+
 /* Procedural ellipse outline — line strip sampled around the perimeter.
    Used for the "drawing" animation when a difference is found:
    tween `endPct` from 0 to 1 and the arc visually draws itself.

@@ -208,6 +208,27 @@ function M.scaleBy(factor, duration, easing)
     }
 end
 
+-- Rotation in radians (matches drawRegion's `rotation` option). rotateTo
+-- tweens to an absolute angle; rotateBy spins by a delta from wherever the
+-- widget's `rotation` was when this leaf started.
+function M.rotateTo(angle, duration, easing)
+    return makeTween{
+        duration = duration, easing = easing,
+        capture = function(w) return { r = w.rotation or 0 } end,
+        apply   = function(w, s, k) w.rotation = lerp(s.r, angle, k) end,
+        finish  = function(w) w.rotation = angle end,
+    }
+end
+
+function M.rotateBy(delta, duration, easing)
+    return makeTween{
+        duration = duration, easing = easing,
+        capture = function(w) return { r = w.rotation or 0 } end,
+        apply   = function(w, s, k) w.rotation = s.r + delta * k end,
+        finish  = function(w, s) w.rotation = s.r + delta end,
+    }
+end
+
 -- Generic numeric property tween — for less common fields not covered
 -- by the named leaves (textScale, custom widget fields, etc.).
 function M.tweenTo(prop, value, duration, easing)

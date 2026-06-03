@@ -295,6 +295,7 @@ static int scrDrawRegion(lua_State *L)
     int   flip  = 0;
     float fx    = 1.0f, fy = 1.0f;
     float sx_   = 1.0f, sy_ = 1.0f;
+    float rot_  = 0.0f;   /* radians, about the dest-rect center */
     float cr_ = 1.0f, cg_ = 1.0f, cb_ = 1.0f, ca_ = 1.0f;
 
     /* Optional source sub-rect (for atlas frames / 9-patch slices) and
@@ -314,6 +315,7 @@ static int scrDrawRegion(lua_State *L)
         float uniform = scrOptfieldNum(L, 4, "scale", 1.0f);
         sx_   = scrOptfieldNum(L, 4, "scaleX", uniform);
         sy_   = scrOptfieldNum(L, 4, "scaleY", uniform);
+        rot_  = scrOptfieldNum(L, 4, "rotation", 0.0f);
         scrOptfieldColor(L, 4, &cr_, &cg_, &cb_, &ca_);
 
         lua_getfield(L, 4, "srcX");
@@ -429,7 +431,11 @@ static int scrDrawRegion(lua_State *L)
 
     UiRect dr;
     dr.x = dst_x; dr.y = dst_y; dr.w = dst_w; dr.h = dst_h;
-    uiIconUVColor(dr, tex, u0, v0, u1, v1, cr_, cg_, cb_, ca_);
+    if (rot_ != 0.0f) {
+        uiIconUVColorRot(dr, tex, u0, v0, u1, v1, cr_, cg_, cb_, ca_, rot_);
+    } else {
+        uiIconUVColor(dr, tex, u0, v0, u1, v1, cr_, cg_, cb_, ca_);
+    }
     return 0;
 }
 
