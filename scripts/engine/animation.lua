@@ -48,6 +48,15 @@ M.easeInOut = function(t)
     return 1 - 2 * u * u
 end
 
+-- Exponential ease in/out — flat ends, steep middle. Sharper acceleration
+-- than the pow variants; good for snappy pop-in / pop-out timing.
+M.easeInOutExpo = function(t)
+    if t <= 0 then return 0 end
+    if t >= 1 then return 1 end
+    if t < 0.5 then return 0.5 * 2 ^ (20 * t - 10) end
+    return 1 - 0.5 * 2 ^ (-20 * t + 10)
+end
+
 -- Overshoots past 1, then settles — classic "pop in" feel.
 local BACK_S = 1.70158
 M.easeOutBack = function(t)
