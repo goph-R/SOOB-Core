@@ -45,6 +45,7 @@ struct ScriptSystem {
     TexCache      *texCache;   /* shared cache for draw_sprite's lazy PNG loads */
     TexBlurCache  *blurCache;  /* downsampled color-summary textures (drawBlur) */
     const char    *optFile;    /* persistence target, e.g. "find5.dat" — set by scriptInit */
+    int            quitRequested; /* requestQuit() sets this; the host loop polls it and exits */
 };
 
 /* ---- C bindings ---- */
@@ -1162,6 +1163,20 @@ static void scriptResolveConfigPath(const char *app_name, const char *filename,
 #endif
 }
 
+/* requestQuit()  — ask the host to exit after the current frame. Sets a
+   flag the C main loop polls; the normal shutdown path (scriptShutdown,
+   audio / UI teardown, SDL_Quit) still runs, so it's a graceful exit,
+   not an abort. Safe to call more than once. Esc remains the hardcoded
+   kill-switch in the host loop; this is the script-driven counterpart. */
+static int scrRequestQuit(lua_State *L)
+{
+    lua_getfield(L, LUA_REGISTRYINDEX, "engine.sys");
+    ScriptSystem *s = (ScriptSystem *)lua_touserdata(L, -1);
+    lua_pop(L, 1);
+    if (s) s->quitRequested = 1;
+    return 0;
+}
+
 static int scriptInit(ScriptSystem *s, UiState *ui, SoundSystem *snd,
                       SoundLibrary *sndLib, MusicSystem *music,
                       MusicLibrary *musLib, AssetRegistry *reg,
@@ -1177,6 +1192,7 @@ static int scriptInit(ScriptSystem *s, UiState *ui, SoundSystem *snd,
     s->texCache  = texCache;
     s->blurCache = blurCache;
     s->optFile   = optFile;
+    s->quitRequested = 0;
 
     s->L = luaL_newstate();
     if (!s->L) {
@@ -1212,6 +1228,7 @@ static int scriptInit(ScriptSystem *s, UiState *ui, SoundSystem *snd,
     lua_register(s->L, "optGet",         scrOptGet);
     lua_register(s->L, "optSave",        scrOptSave);
     lua_register(s->L, "optLoad",        scrOptLoad);
+    lua_register(s->L, "requestQuit",    scrRequestQuit);
 
     /* Auto-load s->optFile on init so options are ready before the
        entry script runs. Lua code can call optLoad() again later if
