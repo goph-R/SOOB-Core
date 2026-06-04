@@ -653,16 +653,22 @@ static void uiIconUVColorRot(UiRect r, GLuint tex,
     glDisable(GL_TEXTURE_2D);
 }
 
-/* Procedural ellipse outline — line strip sampled around the perimeter.
-   Used for the "drawing" animation when a difference is found:
+/* Procedural ellipse outline — a triangle-strip ribbon stroked along the
+   perimeter. Used for the "drawing" animation when a difference is found:
    tween `endPct` from 0 to 1 and the arc visually draws itself.
+
+   The stroke width is built from geometry (two vertices, outer + inner,
+   per sample) rather than glLineWidth: that GL state is unreliable —
+   clamped to ~1 px on many drivers (and always 1 in WebGL), which would
+   silently flatten a thick ring. As a side effect `thickness` is now in
+   virtual units, so it scales with the canvas like every other UI size.
 
    cx, cy     — center, virtual coords
    rx, ry     — radii, virtual units
    startPct   — where to begin along the perimeter (0..1, 0 = right)
    endPct     — where to stop (must be > startPct or nothing draws)
-   segments   — vertex count around the full ellipse (64 is plenty)
-   thickness  — line width in pixels (driver-clamped; ~1-10 on a GF4MX)
+   segments   — sample count around the full ellipse (64 is plenty)
+   thickness  — stroke width in virtual units, centered on the perimeter
    c          — color, including alpha for fading
 
    Caller must be inside uiBegin/uiEnd (or have set ortho + disabled
@@ -676,10 +682,11 @@ static void uiEllipse(float cx, float cy, float rx, float ry,
     if (endPct <= startPct) return;
     if (startPct < 0.0f) startPct = 0.0f;
     if (endPct   > 1.0f) endPct   = 1.0f;
+    if (rx < 0.0001f || ry < 0.0001f) return;   /* avoid /0 in the normal */
+    if (thickness < 0.0f) thickness = 0.0f;
 
     glDisable(GL_TEXTURE_2D);
     glColor4f(c.r, c.g, c.b, c.a);
-    glLineWidth(thickness);
 
     const float TAU = 6.28318530717958647692f;
     float startAng = startPct * TAU;
@@ -687,15 +694,25 @@ static void uiEllipse(float cx, float cy, float rx, float ry,
     int n = (int)((float)segments * (endPct - startPct)) + 1;
     if (n < 2) n = 2;
 
-    glBegin(GL_LINE_STRIP);
+    float half = thickness * 0.5f;
+
+    glBegin(GL_TRIANGLE_STRIP);
     for (int i = 0; i <= n; i++) {
-        float t = (float)i / (float)n;
+        float t   = (float)i / (float)n;
         float ang = startAng + t * angRange;
-        glVertex2f(cx + rx * cosf(ang), cy + ry * sinf(ang));
+        float cosA = cosf(ang), sinA = sinf(ang);
+        float px = cx + rx * cosA;
+        float py = cy + ry * sinA;
+        /* Outward ellipse normal: gradient of (x/rx)^2 + (y/ry)^2, i.e.
+           (cos/rx, sin/ry), normalized — radial only when rx == ry. */
+        float nx = cosA / rx;
+        float ny = sinA / ry;
+        float nl = sqrtf(nx * nx + ny * ny);
+        if (nl > 0.0001f) { nx /= nl; ny /= nl; }
+        glVertex2f(px + nx * half, py + ny * half);   /* outer edge */
+        glVertex2f(px - nx * half, py - ny * half);   /* inner edge */
     }
     glEnd();
-
-    glLineWidth(1.0f);
 }
 
 /* Bitmap text.
