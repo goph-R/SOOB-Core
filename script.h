@@ -1183,6 +1183,14 @@ static int scrRequestQuit(lua_State *L)
     return 0;
 }
 
+/* imeShow(x, y, w, h) / imeHide() — soft-keyboard bridge hooks. The lineEdit
+ * widget calls these when it gains / loses focus. On native there is a real
+ * keyboard, so they are no-ops; the web host overrides them to summon / hide
+ * a hidden <input> (see SOOB-Core-Web). Registered here so the shared
+ * widget.lua can call them unconditionally on every consumer. */
+static int scrImeShow(lua_State *L) { (void)L; return 0; }
+static int scrImeHide(lua_State *L) { (void)L; return 0; }
+
 static int scriptInit(ScriptSystem *s, UiState *ui, SoundSystem *snd,
                       SoundLibrary *sndLib, MusicSystem *music,
                       MusicLibrary *musLib, AssetRegistry *reg,
@@ -1235,6 +1243,8 @@ static int scriptInit(ScriptSystem *s, UiState *ui, SoundSystem *snd,
     lua_register(s->L, "optSave",        scrOptSave);
     lua_register(s->L, "optLoad",        scrOptLoad);
     lua_register(s->L, "requestQuit",    scrRequestQuit);
+    lua_register(s->L, "imeShow",        scrImeShow);
+    lua_register(s->L, "imeHide",        scrImeHide);
 
     /* Auto-load s->optFile on init so options are ready before the
        entry script runs. Lua code can call optLoad() again later if

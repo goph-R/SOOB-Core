@@ -103,6 +103,8 @@ way for scripts to persist state.
 | Binding | Returns | Notes |
 |---|---|---|
 | `print(...)` | — | Overridden to route through `conLogf` (stdout, and the dev console where one exists). Tab-separated like stock `print`. |
+| `imeShow(x, y, w, h)` | — | Soft-keyboard hook: the `lineEdit` widget calls this when it gains focus (bbox in virtual coords). **No-op on native** (real keyboard); the web host overrides it to summon a hidden `<input>` + the OS keyboard. |
+| `imeHide()` | — | Companion to `imeShow`, called when a `lineEdit` loses focus. No-op on native. |
 
 ---
 

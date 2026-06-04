@@ -1060,8 +1060,19 @@ function M.lineEdit(spec)
     function w:update(dt)
         if self.focused and not self.disabled then
             self._blink_t = self._blink_t + dt
+            -- Soft-keyboard bridge: on the web host imeShow summons a hidden
+            -- <input> (and the OS keyboard); native registers it as a no-op.
+            -- Fire once on focus gain, hide once on focus loss.
+            if not self._imeOn then
+                self._imeOn = true
+                if imeShow then imeShow(self.x, self.y, self.width, self.height) end
+            end
         else
             self._blink_t = 0
+            if self._imeOn then
+                self._imeOn = false
+                if imeHide then imeHide() end
+            end
         end
     end
 
@@ -1138,6 +1149,11 @@ function M.lineEdit(spec)
         if self.disabled or button ~= 1 or not self:hit(px, py) then return false end
         self.cursor = cursorFromX(self, px)
         self._blink_t = 0   -- re-show cursor immediately on click
+        -- Open the soft keyboard from inside the tap gesture — iOS only honors
+        -- a focus() call on the same call stack as the user event, so this must
+        -- happen here, not a frame later in :update.
+        self._imeOn = true
+        if imeShow then imeShow(self.x, self.y, self.width, self.height) end
         return true
     end
 
