@@ -32,9 +32,14 @@ Two options; **recommend the first** for exact behavioral parity:
    surprises (`setfenv`/`getfenv`, `unpack`, etc.). Bindings are JS functions
    imported into the module; marshal args across the C-API the same way
    `script.h` does.
-2. **Fengari** (Lua 5.3 in pure JS) for a fast MVP. Easiest JS interop, but
-   audit for 5.1→5.3 gaps — notably `installHooks(_G)` (no `setfenv` in 5.2+)
-   and `unpack`→`table.unpack`.
+2. **Fengari** (Lua 5.3 in pure JS) for a fast MVP. Easiest JS interop, and
+   lower-risk than it first looks: an audit of all Lua in both repos found
+   **none** of the usual 5.1→5.3 traps — no `setfenv`/`getfenv`, no `unpack`,
+   `string.gfind`, `math.mod`, or integer/float (`//`) usage. In particular
+   `scene.installHooks` just *assigns* global functions (`env.onUpdate = …`),
+   it does **not** swap environments, so the missing-`setfenv` worry doesn't
+   apply. Option 1 is still preferred, but only for byte-exact bytecode/`%`
+   parity and to skip the audit — not because Fengari would break the scripts.
 
 Either way the host exposes the same global functions/hooks, so Find5's Lua is
 identical across desktop and web.
@@ -45,13 +50,18 @@ Group the [`SOOB-Lua.md`](SOOB-Lua.md) surface by subsystem:
 
 | Area | Bindings | Web implementation |
 |---|---|---|
-| **Rendering** | `drawRegion` `drawText` `drawEllipse` `drawQuad` `drawBg` `drawBlur` | **WebGL1** sprite batcher: one textured-quad shader with a per-vertex color/alpha tint (matches `uiIconUVColor` exactly — UVs + RGBA). `drawText` = BMFont quads; `drawEllipse` = triangle/line strip; `drawQuad` = flat quad; `drawBg` = cover-fit quad; `drawBlur` = draw the cached downsampled texture stretched up. WebGL1 (universal) is enough; no WebGL2 needed. (Canvas2D is a viable MVP but loses easy tint/alpha parity.) |
+| **Rendering** | `drawRegion` `drawText` `drawEllipse` `drawQuad` `drawBg` `drawBlur` | **WebGL1** sprite batcher: one textured-quad shader with a per-vertex color/alpha tint (matches `uiIconUVColor` exactly — UVs + RGBA). `drawText` = BMFont quads; `drawEllipse` = **triangle-strip ribbon** (NOT `LINE_STRIP` — browsers clamp `gl.lineWidth` to 1, and Find5 draws the find/reveal rings with real thickness ~2.5, so a line strip won't reproduce them); `drawQuad` = flat quad; `drawBg` = cover-fit quad; `drawBlur` = render-to-texture **downsample** to build the blur (the `texBlur` equivalent — an FBO pass), then draw it stretched up. WebGL1 (universal) is enough; no WebGL2 needed. (Canvas2D is a viable MVP but loses easy tint/alpha parity.) |
 | **Queries** | `viewSize` `regionSize` `regionSlice` `textWidth` | Pure JS off the loaded region table + BMFont metrics. `viewSize` returns the current virtual-canvas size (see scaling). |
 | **Audio** | `soundPlay` `musicPlay` `musicStop` `musicVolume` | **Web Audio**. Sounds → decoded `AudioBuffer`s, played via `AudioBufferSourceNode`. Music → two `GainNode`s for crossfade (`linearRampToValueAtTime` over `fadeSec`), `musicVolume` = master gain. |
 | **Input (polling)** | `keyDown` `mousePos` `mouseDown` `keyModifiers` | Held-keys `Set`, last pointer position, button state — all fed from DOM listeners. |
 | **Options** | `optSet` `optGet` `optSave` `optLoad` | In-memory opts table; `optSave`/`optLoad` ↔ **localStorage** (serialize the table to a string, reload as a chunk). The `io` sandbox you already enforce maps perfectly. |
-| **Misc** | `print` | → `console.log`. |
+| **Misc** | `print` `uiShowMessage` `requestQuit` | `print` → `console.log`. **`uiShowMessage`** is the engine's transient HUD overlay — set in C, ticked by `uiUpdateMessage`, drawn by `uiDrawMessage` *after* the `onRender` hook (native loop: `main.cpp:270`/`280`). Find5 only uses it for a couple of placeholder toasts; its real use lives in **SOOB-Engine** (native, not web-ported), so on web it degrades to a plain **`console.log`** — no overlay state, no per-frame tick or draw needed. **`requestQuit`** has no meaning in a browser → **no-op** (optionally exit fullscreen). |
 | **Constants** | `ALIGN_*`, `FLIP_*` | Set as Lua globals at init, same integer values. |
+
+> **Binding count:** the C side registers **25** names (`grep lua_register
+> script.h`). The rows above cover all of them — earlier drafts dropped
+> `uiShowMessage` and `requestQuit`, now folded into **Misc** since neither
+> needs a rendered web implementation.
 
 ### Frame loop
 
@@ -68,9 +78,17 @@ function frame(now) {
 }
 ```
 
+This mirrors the native loop (`main.cpp:264–284`) **minus** its `uiUpdateMessage`
+/ `uiDrawMessage` steps — those only exist to render the C HUD overlay, which
+degrades to `console.log` here (see the Misc binding note), so the web loop
+needs no message tick or draw.
+
 DOM events feed the input hooks: `keydown/keyup → onKeyDown/onKeyUp`,
 `pointerdown/up/move → onMouseDown/onMouseUp/onMouseMove` (coords converted to
-the virtual canvas), and the held-state used by the polling bindings.
+the virtual canvas), and the held-state used by the polling bindings. The
+pixel→virtual transform (and `onMouseMove`'s delta scaling) must match
+`main.cpp` exactly so hit-testing is identical desktop ↔ web — worth one parity
+check against `viewSize()`.
 
 ## Asset pipeline
 
@@ -88,6 +106,26 @@ returned table, and build the JS-side registries. This is the literal analog of
 > **Ogg on Safari:** historically unsupported. Either ship an `.m4a`/`.webm`
 > fallback per track and pick by `canPlayType`, or transcode music to a
 > universally-supported codec. PNG/WAV are fine everywhere.
+
+### Boot order — the sync → async boundary
+
+Native `scriptLoadAssets` is **synchronous**: by the time `main.lua` runs,
+sounds are decoded and textures decode lazily on first `drawRegion`, so
+`onStart` can `musicPlay` and draw immediately. On the web every loader
+(`fetch`, `decodeAudioData`, `createImageBitmap`) is **async**, so the host
+must **await and register every asset before it runs `main.lua` / fires
+`onStart`** — otherwise the first frame's `drawRegion` / `soundPlay` hit empty
+registries. Boot sequence:
+
+```
+parse assets.lua  →  start all fetch+decode  →  await Promise.all
+                  →  build JS registries     →  run main.lua → onStart → frame loop
+```
+
+So milestone 1 already needs a (trivial) loading gate, not just the polished
+loading screen in milestone 5. Preload **all** textures up front rather than
+mirroring the native lazy-decode — the game is small and it keeps `drawRegion`
+synchronous.
 
 ## Display & scaling
 
@@ -156,7 +194,10 @@ are tiny and host-level:
 - Everything else (renderer, audio, input, assets, persistence) is **new JS in
   the web host only** — no edits to `script.h` or the desktop hosts.
 - Optional: a read-only `platform` global (`"web"` / `"desktop"`) for cosmetic
-  branching (e.g. showing the rotate hint).
+  branching — e.g. showing the rotate hint, and hiding the menu's close (X)
+  button / "Exit to system?" path on web, where `requestQuit` is a no-op and
+  there's no app to quit. (Desktop's Esc kill-switch is also C-side and simply
+  absent on web — fine, since nothing on web needs a hard quit.)
 
 ## Packaging & hosting
 
