@@ -698,10 +698,11 @@ static int scrDrawBg(lua_State *L)
 /* drawBlur(name [, opts])
  * Draws a blurred "color summary" of the named region as a backdrop:
  * downsamples the source PNG to `width` × (aspect-derived height), uploads
- * it once (cached), then stretches the tiny texture to fill the view width
- * and centers it vertically. Stretching a 16×27 texture up to ~640 px wide
- * produces smooth color gradients between the few sample points — the
- * source image's dominant colors smeared across the screen.
+ * it once (cached), then cover-fits the tiny texture over the whole view
+ * (centered, cropping the overflow on the longer axis — same framing as
+ * drawBg). Upscaling a 16×27 texture produces smooth color gradients between
+ * the few sample points — the source image's dominant colors across the
+ * screen, without distorting on non-4:3 aspects.
  *
  *   width  (number) downsample width in pixels (default 16, max 64).
  *                   Height is derived from the source aspect ratio.
@@ -739,12 +740,20 @@ static int scrDrawBlur(lua_State *L)
                             rg->sx, rg->sy, rg->sw, rg->sh, downW);
     if (!tex) return 0;
 
-    /* Stretch to view width, preserve the region's aspect, center vertically.
-       For a taller-than-wide portrait the height overruns the canvas —
-       exactly what we want, the blurred color fills top-to-bottom. */
+    /* Cover-fit: uniformly scale the blurred summary so it fills the whole
+       view, cropping the overflow on the longer axis (same math as drawBg,
+       and matches the web host). Preserves the region aspect — no smearing on
+       non-4:3 screens. */
     float vw = uiGetWidth(s->ui);
-    float dst_w = vw;
-    float dst_h = vw * (float)rg->sh / (float)rg->sw;
+    float vh = uiGetHeight(s->ui);
+    float bw = (float)rg->sw;
+    float bh = (float)rg->sh;
+    float scaleX = vw / bw;
+    float scaleY = vh / bh;
+    float scale  = (scaleX > scaleY) ? scaleX : scaleY;
+
+    float dst_w = bw * scale;
+    float dst_h = bh * scale;
 
     UiRect dr;
     dr.x = -dst_w * 0.5f;

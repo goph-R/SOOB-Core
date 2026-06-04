@@ -71,7 +71,7 @@ drawRegion(name, x, y, {                 -- options-table form
 | `drawEllipse(cx, cy, rx, ry [, {start, finish, segments, thickness, color, alpha}])` | — | Procedural arc/ellipse. `start`/`finish` in `[0,1]` (tween `finish` for the "drawing" animation). `segments` default 64, `thickness` default 2 (driver may clamp). |
 | `drawQuad(x, y, w, h [, {color, alpha}])` | — | Flat-color quad (dim overlays, flashes, backdrops). `(x,y)` is the top-left anchor. |
 | `drawBg(name)` | — | Cover-fit a region to the full view (CSS `background-size: cover`), centered, cropping the longer axis. |
-| `drawBlur(name [, {width, alpha}])` | — | Blurred "color summary" backdrop: downsamples the source to `width` px (default 16, max 64) and stretches it to fill. `alpha` default `0.6`. First call per `(path,width)` pays the decode; then cached. |
+| `drawBlur(name [, {width, alpha}])` | — | Blurred "color summary" backdrop: downsamples the source to `width` px (default 16, max 64) and **cover-fits** it to the view (centered, cropping the longer axis — like `drawBg`). `alpha` default `0.6`. First call per `(path,width)` pays the decode; then cached. |
 
 `align` is a bitmask: horizontal `ALIGN_LEFT(1) | ALIGN_CENTER(2) | ALIGN_RIGHT(4)`,
 vertical `ALIGN_TOP(8) | ALIGN_MIDDLE(16) | ALIGN_BOTTOM(32)`; `0` = TOP+LEFT.
