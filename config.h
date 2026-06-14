@@ -35,6 +35,7 @@ struct Config {
     int width;          /* 0 = use desktop res (fullscreen only) */
     int height;         /* 0 = use desktop res (fullscreen only) */
     int fullscreen;     /* 0 / 1 */
+    int vsync;          /* 0 / 1 — requested via SDL_GL_SWAP_CONTROL */
     int wExplicitCli;   /* set by configApplyArgs if -w was passed */
     int hExplicitCli;   /* set by configApplyArgs if -h was passed */
 };
@@ -45,6 +46,7 @@ static Config configLoadDefaults(void)
     c.width        = 640;
     c.height       = 480;
     c.fullscreen   = 0;
+    c.vsync        = 1;   /* on by default: avoids tearing on modern stacks */
     c.wExplicitCli = 0;
     c.hExplicitCli = 0;
     return c;
@@ -73,6 +75,10 @@ static void configLoadFromFile(Config *c, const char *path)
             lua_getfield(L, -1, "fullscreen");
             if (lua_isboolean(L, -1)) c->fullscreen = lua_toboolean(L, -1);
             lua_pop(L, 1);
+
+            lua_getfield(L, -1, "vsync");
+            if (lua_isboolean(L, -1)) c->vsync = lua_toboolean(L, -1);
+            lua_pop(L, 1);
         }
         lua_pop(L, 1);  /* "display" (or nil if absent) */
     }
@@ -94,6 +100,10 @@ static void configApplyArgs(Config *c, int argc, char **argv)
             c->fullscreen = 1;
         } else if (strcmp(argv[i], "-windowed") == 0) {
             c->fullscreen = 0;
+        } else if (strcmp(argv[i], "-vsync") == 0) {
+            c->vsync = 1;
+        } else if (strcmp(argv[i], "-novsync") == 0) {
+            c->vsync = 0;
         }
     }
 }
