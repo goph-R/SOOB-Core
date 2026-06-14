@@ -61,6 +61,9 @@
 #define MUSIC_NUM_TRACKS     2        /* enough for one crossfade in flight */
 #define MUSIC_PATH_MAX       128
 #define MUSIC_NAME_MAX       32
+#define MUSIC_LOOP_RETRY     4        /* re-seek attempts per fill before giving
+                                         up THIS pump; a looping track never
+                                         latches eos — it just retries next frame */
 
 struct MusicTrack {
     stb_vorbis *vorbis;       /* NULL = slot free */
@@ -75,6 +78,8 @@ struct MusicTrack {
     float      fadeRate;      /* gain change per second */
     int        stopOnFadeOut; /* 1 = free the slot when gain hits 0 */
     int        eos;           /* file ended, drain queue then stop */
+    int        warned;        /* 1 once a loop re-seek failure has been logged,
+                                 so a broken looping file can't spam the log */
     char       name[MUSIC_NAME_MAX];   /* registered logical name, "" if raw path */
     char       path[MUSIC_PATH_MAX];   /* file path, for log + same-track checks */
 };
@@ -111,29 +116,46 @@ static int musicFillBuffer(MusicTrack *t, ALuint buf)
     int  framesGot = stb_vorbis_get_samples_short_interleaved(
                          t->vorbis, t->channels, decodeBuf, shorts);
 
-    /* Short read (or zero) means we hit end-of-stream. If looping, seek
-       back to 0 and fill the remainder of this same buffer so the join
-       is glitch-free. */
+    /* Short read (or zero) means end-of-stream — or, since stb_vorbis reports
+       a mid-stream decode glitch the same way, an occasional hiccup. If
+       looping, seek back to 0 and fill the remainder of this same buffer so
+       the join is glitch-free. Bounded: a corrupt file could otherwise hand
+       back nothing forever, and we check seek_start so a failed seek doesn't
+       silently spin. */
     if (framesGot < MUSIC_BUFFER_FRAMES && t->loop) {
-        while (framesGot < MUSIC_BUFFER_FRAMES) {
-            stb_vorbis_seek_start(t->vorbis);
+        int attempts = 0;
+        while (framesGot < MUSIC_BUFFER_FRAMES && attempts++ < MUSIC_LOOP_RETRY) {
+            if (!stb_vorbis_seek_start(t->vorbis)) {
+                if (!t->warned) {
+                    conLogf("music: loop re-seek failed on '%s'; will retry "
+                            "each pump (track stays alive)\n", t->path);
+                    t->warned = 1;
+                }
+                break;
+            }
             int remShorts = (MUSIC_BUFFER_FRAMES - framesGot) * t->channels;
             short *tail = decodeBuf + framesGot * t->channels;
             int more = stb_vorbis_get_samples_short_interleaved(
                            t->vorbis, t->channels, tail, remShorts);
-            if (more <= 0) break;  /* shouldn't happen, but guard infinite loop */
+            if (more <= 0) break;
             framesGot += more;
         }
     }
 
     if (framesGot <= 0) {
-        t->eos = 1;
+        /* Nothing this round. A looping track must never give up: leave the
+           slot alive and try again next pump — the source may underrun in the
+           meantime, but musicUpdate's AL_STOPPED recovery restarts it the
+           moment we manage to requeue. Only a non-looping track ends here. */
+        if (!t->loop) t->eos = 1;
         return 0;
     }
 
     if (framesGot < MUSIC_BUFFER_FRAMES && !t->loop) {
         /* Partial final buffer — upload what we got, mark eos so the pump
-           stops trying to feed this track once OpenAL drains. */
+           stops trying to feed this track once OpenAL drains. (A looping
+           track that came up short still uploads what it has and keeps
+           streaming; it never latches eos.) */
         t->eos = 1;
     }
 
@@ -153,6 +175,7 @@ static void musicTrackFree(MusicTrack *t)
     stb_vorbis_close(t->vorbis);
     t->vorbis = NULL;
     t->eos = 0;
+    t->warned = 0;
     t->gain = 0.0f;
     t->targetGain = 0.0f;
     t->stopOnFadeOut = 0;
