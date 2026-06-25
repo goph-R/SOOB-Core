@@ -760,8 +760,7 @@ static int scrDrawBlur(lua_State *L)
     dr.y = -dst_h * 0.5f;
     dr.w = dst_w;
     dr.h = dst_h;
-    uiIconUVColor(dr, tex, 0.0f, 0.0f, 1.0f, 1.0f,
-                  1.0f, 1.0f, 1.0f, alpha);
+    uiBlurFit(dr, tex, 0.0f, 0.0f, 1.0f, 1.0f, alpha);
     return 0;
 }
 

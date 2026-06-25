@@ -23,11 +23,24 @@
 #define GL_CLAMP_TO_EDGE 0x812F
 #endif
 
+#ifdef SOOB_SOFTWARE_BACKEND
+#include "swrender/render_soft.h"
+#endif
+
 /* Upload raw RGB or RGBA pixel data to an OpenGL texture.
-   channels must be 3 (RGB) or 4 (RGBA). */
+   channels must be 3 (RGB) or 4 (RGBA).
+
+   This is the single seam for texture residency: in software mode the pixels
+   are copied into the swrender registry (and stay resident) instead of being
+   uploaded to GL. Every texture — regular cache AND blur cache — flows through
+   here, and the returned handle is still a GLuint, so no caller changes. */
 static GLuint uploadTextureN(unsigned char *pixelData, int width, int height,
                              int wrapMode, int channels)
 {
+#ifdef SOOB_SOFTWARE_BACKEND
+    if (g_renderMode == RENDER_MODE_SOFTWARE)
+        return (GLuint)swTexAlloc(pixelData, width, height, channels);
+#endif
     GLuint texID;
     GLenum fmt = (channels == 4) ? GL_RGBA : GL_RGB;
     glGenTextures(1, &texID);

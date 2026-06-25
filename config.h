@@ -36,6 +36,8 @@ struct Config {
     int height;         /* 0 = use desktop res (fullscreen only) */
     int fullscreen;     /* 0 / 1 */
     int vsync;          /* 0 / 1 — requested via SDL_GL_SWAP_CONTROL */
+    int render;         /* 0 = opengl, 1 = software (no-3D path) */
+    int depth;          /* software backbuffer bpp: 16 (RGB565) or 32 */
     int wExplicitCli;   /* set by configApplyArgs if -w was passed */
     int hExplicitCli;   /* set by configApplyArgs if -h was passed */
 };
@@ -47,6 +49,8 @@ static Config configLoadDefaults(void)
     c.height       = 480;
     c.fullscreen   = 0;
     c.vsync        = 1;   /* on by default: avoids tearing on modern stacks */
+    c.render       = 0;   /* opengl */
+    c.depth        = 32;  /* software backbuffer bpp */
     c.wExplicitCli = 0;
     c.hExplicitCli = 0;
     return c;
@@ -79,6 +83,20 @@ static void configLoadFromFile(Config *c, const char *path)
             lua_getfield(L, -1, "vsync");
             if (lua_isboolean(L, -1)) c->vsync = lua_toboolean(L, -1);
             lua_pop(L, 1);
+
+            /* render = "opengl" | "software". Anything not "software" stays
+               on the GL path, so a typo fails safe to hardware rendering. */
+            lua_getfield(L, -1, "render");
+            if (lua_isstring(L, -1))
+                c->render = (strcmp(lua_tostring(L, -1), "software") == 0) ? 1 : 0;
+            lua_pop(L, 1);
+
+            /* depth = 16 | 32 — software backbuffer bpp. Only 16 takes effect;
+               anything else stays 32. Ignored by the GL path. */
+            lua_getfield(L, -1, "depth");
+            if (lua_isnumber(L, -1))
+                c->depth = ((int)lua_tonumber(L, -1) == 16) ? 16 : 32;
+            lua_pop(L, 1);
         }
         lua_pop(L, 1);  /* "display" (or nil if absent) */
     }
@@ -104,6 +122,10 @@ static void configApplyArgs(Config *c, int argc, char **argv)
             c->vsync = 1;
         } else if (strcmp(argv[i], "-novsync") == 0) {
             c->vsync = 0;
+        } else if (strcmp(argv[i], "-software") == 0) {
+            c->render = 1;
+        } else if (strcmp(argv[i], "-opengl") == 0) {
+            c->render = 0;
         }
     }
 }

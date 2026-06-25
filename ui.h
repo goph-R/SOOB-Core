@@ -23,6 +23,10 @@
                        <cmath> (which only puts symbols in std::). */
 #include <cstring>
 
+#ifdef SOOB_SOFTWARE_BACKEND
+#include "swrender/render_soft.h"   /* g_renderMode + swFillRect/swBlitTex + swDev* */
+#endif
+
 /* 128 glyphs × 8 rows × 1 byte. LSB = leftmost pixel. */
 static const unsigned char ui_font8x8[128][8] = {
     {0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00}, {0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00},
@@ -303,14 +307,21 @@ static void uiInit(UiState *ui, int screenW, int screenH)
             }
         }
     }
-    glGenTextures(1, &ui->fontTex);
-    glBindTexture(GL_TEXTURE_2D, ui->fontTex);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, UI_ATLAS_W, UI_ATLAS_H, 0,
-                 GL_RGBA, GL_UNSIGNED_BYTE, px);
+#ifdef SOOB_SOFTWARE_BACKEND
+    if (g_renderMode == RENDER_MODE_SOFTWARE) {
+        ui->fontTex = (GLuint)swTexAlloc(px, UI_ATLAS_W, UI_ATLAS_H, 4);
+    } else
+#endif
+    {
+        glGenTextures(1, &ui->fontTex);
+        glBindTexture(GL_TEXTURE_2D, ui->fontTex);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, UI_ATLAS_W, UI_ATLAS_H, 0,
+                     GL_RGBA, GL_UNSIGNED_BYTE, px);
+    }
     free(px);
     conLogf("ui: font atlas %dx%d built\n", UI_ATLAS_W, UI_ATLAS_H);
 
@@ -319,12 +330,19 @@ static void uiInit(UiState *ui, int screenW, int screenH)
 
 static void uiShutdown(UiState *ui)
 {
-    for (int i = 0; i < ui->fonts.count; i++) {
-        UiFont *f = &ui->fonts.fonts[i];
-        if (f->ownsTex && f->tex) glDeleteTextures(1, &f->tex);
+#ifdef SOOB_SOFTWARE_BACKEND
+    /* Software textures live in the swrender registry, which is freed wholesale
+       at exit — nothing GL-side to release here. */
+    if (g_renderMode != RENDER_MODE_SOFTWARE)
+#endif
+    {
+        for (int i = 0; i < ui->fonts.count; i++) {
+            UiFont *f = &ui->fonts.fonts[i];
+            if (f->ownsTex && f->tex) glDeleteTextures(1, &f->tex);
+        }
+        glDeleteTextures(1, &ui->fontTex);
     }
     ui->fonts.count = 0;
-    glDeleteTextures(1, &ui->fontTex);
     ui->fontTex = 0;
 }
 
@@ -507,6 +525,17 @@ static UiFont *uiFontFind(UiFontLib *lib, const char *name)
    Disable culling while the UI draws. */
 static void uiBegin(UiState *ui)
 {
+#ifdef SOOB_SOFTWARE_BACKEND
+    if (g_renderMode == RENDER_MODE_SOFTWARE) {
+        /* No GL state to set; just publish the virtual->device transform the
+           software primitives read. scale maps the virtual canvas height to the
+           device height (1.0 at the fixed 640x480 / no-stretch target). */
+        g_swHalfW = ui->virtualW * 0.5f;
+        g_swHalfH = ui->virtualH * 0.5f;
+        g_swScale = (ui->virtualH > 0.0f) ? (float)ui->screenH / ui->virtualH : 1.0f;
+        return;
+    }
+#endif
     glMatrixMode(GL_PROJECTION);
     glPushMatrix();
     glLoadIdentity();
@@ -527,6 +556,9 @@ static void uiBegin(UiState *ui)
 
 static void uiEnd(UiState * /*ui*/)
 {
+#ifdef SOOB_SOFTWARE_BACKEND
+    if (g_renderMode == RENDER_MODE_SOFTWARE) return;
+#endif
     glDisable(GL_BLEND);
     glEnable(GL_CULL_FACE);
     glEnable(GL_DEPTH_TEST);
@@ -562,6 +594,13 @@ static float uiTextWidth(UiState *ui, const char *text, float scale,
 /* Filled, flat-colored rectangle. */
 static void uiQuad(UiRect r, UiColor c)
 {
+#ifdef SOOB_SOFTWARE_BACKEND
+    if (g_renderMode == RENDER_MODE_SOFTWARE) {
+        swFillRect(&g_swCanvas, swDevX(r.x), swDevY(r.y), swDevLen(r.w), swDevLen(r.h),
+                   swByte(c.r), swByte(c.g), swByte(c.b), swByte(c.a));
+        return;
+    }
+#endif
     glDisable(GL_TEXTURE_2D);
     glColor4f(c.r, c.g, c.b, c.a);
     glBegin(GL_QUADS);
@@ -575,6 +614,13 @@ static void uiQuad(UiRect r, UiColor c)
 /* Textured rectangle (e.g., weapon icon, key pickup). */
 static void uiIcon(UiRect r, GLuint tex)
 {
+#ifdef SOOB_SOFTWARE_BACKEND
+    if (g_renderMode == RENDER_MODE_SOFTWARE) {
+        swBlitTex(&g_swCanvas, (unsigned)tex, swDevX(r.x), swDevY(r.y),
+                  swDevLen(r.w), swDevLen(r.h), 0, 0, 1, 1, 255, 255, 255, 255);
+        return;
+    }
+#endif
     glEnable(GL_TEXTURE_2D);
     glBindTexture(GL_TEXTURE_2D, tex);
     glColor4f(1, 1, 1, 1);
@@ -593,6 +639,13 @@ static void uiIcon(UiRect r, GLuint tex)
 static void uiIconUV(UiRect r, GLuint tex,
                      float u0, float v0, float u1, float v1)
 {
+#ifdef SOOB_SOFTWARE_BACKEND
+    if (g_renderMode == RENDER_MODE_SOFTWARE) {
+        swBlitTex(&g_swCanvas, (unsigned)tex, swDevX(r.x), swDevY(r.y),
+                  swDevLen(r.w), swDevLen(r.h), u0, v0, u1, v1, 255, 255, 255, 255);
+        return;
+    }
+#endif
     glEnable(GL_TEXTURE_2D);
     glBindTexture(GL_TEXTURE_2D, tex);
     glColor4f(1, 1, 1, 1);
@@ -612,6 +665,14 @@ static void uiIconUVColor(UiRect r, GLuint tex,
                           float u0, float v0, float u1, float v1,
                           float cr, float cg, float cb, float ca)
 {
+#ifdef SOOB_SOFTWARE_BACKEND
+    if (g_renderMode == RENDER_MODE_SOFTWARE) {
+        swBlitTex(&g_swCanvas, (unsigned)tex, swDevX(r.x), swDevY(r.y),
+                  swDevLen(r.w), swDevLen(r.h), u0, v0, u1, v1,
+                  swByte(cr), swByte(cg), swByte(cb), swByte(ca));
+        return;
+    }
+#endif
     glEnable(GL_TEXTURE_2D);
     glBindTexture(GL_TEXTURE_2D, tex);
     glColor4f(cr, cg, cb, ca);
@@ -631,6 +692,17 @@ static void uiIconUVColorRot(UiRect r, GLuint tex,
                              float cr, float cg, float cb, float ca,
                              float angle)
 {
+#ifdef SOOB_SOFTWARE_BACKEND
+    if (g_renderMode == RENDER_MODE_SOFTWARE) {
+        /* TODO: inverse-affine sampler for true rotation. For now draw axis-
+           aligned (rotation ignored) so spinning sprites render upright rather
+           than not at all. */
+        swBlitTex(&g_swCanvas, (unsigned)tex, swDevX(r.x), swDevY(r.y),
+                  swDevLen(r.w), swDevLen(r.h), u0, v0, u1, v1,
+                  swByte(cr), swByte(cg), swByte(cb), swByte(ca));
+        return;
+    }
+#endif
     float cx = r.x + r.w * 0.5f;
     float cy = r.y + r.h * 0.5f;
     float hw = r.w * 0.5f, hh = r.h * 0.5f;
@@ -651,6 +723,27 @@ static void uiIconUVColorRot(UiRect r, GLuint tex,
     }
     glEnd();
     glDisable(GL_TEXTURE_2D);
+}
+
+/* Cover-fit a (typically tiny) texture over a rect — the blurred backdrop.
+   GL path is identical to uiIconUVColor with a white tint + alpha, relying on
+   GL_LINEAR to smooth the upscale. Software path bilinearly upscales once into a
+   cached texture (swBlurUpscaleGet) and alpha-blits that 1:1 each frame, so the
+   per-frame cost is one blit rather than a full-screen bilinear resample. */
+static void uiBlurFit(UiRect r, GLuint tex,
+                      float u0, float v0, float u1, float v1, float alpha)
+{
+#ifdef SOOB_SOFTWARE_BACKEND
+    if (g_renderMode == RENDER_MODE_SOFTWARE) {
+        int dw = swDevLen(r.w), dh = swDevLen(r.h);
+        unsigned up = swBlurUpscaleGet((unsigned)tex, dw, dh);
+        if (up)
+            swBlitTex(&g_swCanvas, up, swDevX(r.x), swDevY(r.y), dw, dh,
+                      0, 0, 1, 1, 255, 255, 255, swByte(alpha));
+        return;
+    }
+#endif
+    uiIconUVColor(r, tex, u0, v0, u1, v1, 1.0f, 1.0f, 1.0f, alpha);
 }
 
 /* Procedural ellipse outline — a triangle-strip ribbon stroked along the
@@ -678,6 +771,20 @@ static void uiEllipse(float cx, float cy, float rx, float ry,
                       int segments, float thickness,
                       UiColor c)
 {
+#ifdef SOOB_SOFTWARE_BACKEND
+    if (g_renderMode == RENDER_MODE_SOFTWARE) {
+        if (endPct <= startPct) return;
+        if (startPct < 0.0f) startPct = 0.0f;
+        if (endPct   > 1.0f) endPct   = 1.0f;
+        if (rx < 0.0001f || ry < 0.0001f) return;
+        if (thickness < 0.0f) thickness = 0.0f;
+        swEllipse(&g_swCanvas, (float)swDevX(cx), (float)swDevY(cy),
+                  swDevLen(rx), swDevLen(ry), startPct, endPct,
+                  thickness * 0.5f * g_swScale,
+                  swByte(c.r), swByte(c.g), swByte(c.b), swByte(c.a));
+        return;
+    }
+#endif
     if (segments < 4) segments = 4;
     if (endPct <= startPct) return;
     if (startPct < 0.0f) startPct = 0.0f;
@@ -726,11 +833,89 @@ static void uiEllipse(float cx, float cy, float rx, float ry,
    holds there.
    `fontName` looks up a loaded BMFont (NULL → "default"). If no font is
    registered, the built-in 8x8 atlas is used as a fallback. */
+#ifdef SOOB_SOFTWARE_BACKEND
+/* Software text: same measurement + per-glyph layout as the GL path below, but
+   each glyph is a swBlitTex from the font atlas instead of a textured GL quad.
+   Mirrors both the 8x8 fallback and the BMFont path so behaviour matches. */
+static void uiTextSoft(UiState *ui, float x, float y, UiColor c, const char *text,
+                       float scale, int align, const char *fontName)
+{
+    UiFont *font = uiFontFind(&ui->fonts, fontName);
+    unsigned cr = swByte(c.r), cg = swByte(c.g), cb = swByte(c.b), ca = swByte(c.a);
+
+    if (!font) {
+        const float gw = 8.0f * scale, gh = 8.0f * scale;
+        int len = 0; for (const char *p = text; *p; p++) len++;
+        float textW = len * gw;
+        if (align & UI_ALIGN_CENTER)      x -= textW * 0.5f;
+        else if (align & UI_ALIGN_RIGHT)  x -= textW;
+        if (align & UI_ALIGN_MIDDLE)      y -= gh * 0.5f;
+        else if (align & UI_ALIGN_BOTTOM) y -= gh;
+
+        const float cellU  = (float)UI_CELL_PX  / (float)UI_ATLAS_W;
+        const float cellV  = (float)UI_CELL_PX  / (float)UI_ATLAS_H;
+        const float insetU = 1.0f               / (float)UI_ATLAS_W;
+        const float insetV = 1.0f               / (float)UI_ATLAS_H;
+        const float glyphU = (float)UI_GLYPH_PX / (float)UI_ATLAS_W;
+        const float glyphV = (float)UI_GLYPH_PX / (float)UI_ATLAS_H;
+        float px = x;
+        for (const char *p = text; *p; p++) {
+            unsigned char ch = (unsigned char)*p;
+            if (ch >= 128) ch = '?';
+            float u0 = (ch % 16) * cellU + insetU;
+            float v0 = (ch / 16) * cellV + insetV;
+            swBlitTex(&g_swCanvas, (unsigned)ui->fontTex,
+                      swDevX(px), swDevY(y), swDevLen(gw), swDevLen(gh),
+                      u0, v0, u0 + glyphU, v0 + glyphV, cr, cg, cb, ca);
+            px += gw;
+        }
+        return;
+    }
+
+    float rs = scale;
+    float textW = 0.0f;
+    for (const char *p = text; *p; p++) {
+        unsigned char ch = (unsigned char)*p;
+        if (ch >= UI_FONT_GLYPH_MAX || !font->glyphs[ch].valid) ch = '?';
+        textW += font->glyphs[ch].xadvance * rs;
+    }
+    float textH = font->lineHeight * rs;
+    if (align & UI_ALIGN_CENTER)      x -= textW * 0.5f;
+    else if (align & UI_ALIGN_RIGHT)  x -= textW;
+    if (align & UI_ALIGN_MIDDLE)      y -= textH * 0.5f;
+    else if (align & UI_ALIGN_BOTTOM) y -= textH;
+
+    const float invW = 1.0f / (float)font->atlasW;
+    const float invH = 1.0f / (float)font->atlasH;
+    float pen = x;
+    for (const char *p = text; *p; p++) {
+        unsigned char ch = (unsigned char)*p;
+        if (ch >= UI_FONT_GLYPH_MAX || !font->glyphs[ch].valid) ch = '?';
+        UiGlyph *g = &font->glyphs[ch];
+        float gx = pen + g->xoffset * rs;
+        float gy = y   + g->yoffset * rs;
+        float gw = g->w * rs, gh = g->h * rs;
+        float u0 = g->x * invW, v0 = g->y * invH;
+        float u1 = (g->x + g->w) * invW, v1 = (g->y + g->h) * invH;
+        swBlitTex(&g_swCanvas, (unsigned)font->tex,
+                  swDevX(gx), swDevY(gy), swDevLen(gw), swDevLen(gh),
+                  u0, v0, u1, v1, cr, cg, cb, ca);
+        pen += g->xadvance * rs;
+    }
+}
+#endif /* SOOB_SOFTWARE_BACKEND */
+
 static void uiText(UiState *ui, float x, float y, UiColor c, const char *text,
                    float scale = 1.0f,
                    int align = UI_ALIGN_TOP | UI_ALIGN_LEFT,
                    const char *fontName = NULL)
 {
+#ifdef SOOB_SOFTWARE_BACKEND
+    if (g_renderMode == RENDER_MODE_SOFTWARE) {
+        uiTextSoft(ui, x, y, c, text, scale, align, fontName);
+        return;
+    }
+#endif
     UiFont *font = uiFontFind(&ui->fonts, fontName);
 
     if (!font) {
