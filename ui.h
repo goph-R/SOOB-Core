@@ -523,6 +523,35 @@ static UiFont *uiFontFind(UiFontLib *lib, const char *name)
    authored with natural top-left-to-bottom-left winding come out back-
    facing in NDC. With GL_CULL_FACE enabled at init, they'd be culled.
    Disable culling while the UI draws. */
+/* ---- pixel snapping (GL path) -------------------------------------------
+ * At a non-native resolution the virtual->device scale is fractional, so a
+ * quad's corners — and the diagonal where its two triangles meet — land on
+ * sub-pixel device positions. That shows as a faint seam along the diagonal
+ * under GL_LINEAR. Snapping each vertex to a whole device pixel removes it.
+ *
+ * uiBegin publishes the same (half, scale) transform the ortho uses. The snap
+ * is a pure function of the coordinate, so the left/right (and top/bottom)
+ * edges each map deterministically and the quad stays a proper rectangle.
+ * No-op at the native target (scale == 1, already pixel-aligned). The rotated
+ * and ellipse paths intentionally skip it — snapping their vertices
+ * independently would shear the shape. */
+static int   g_uiSnap      = 1;     /* 0 disables; could be wired to config */
+static float g_uiSnapScale = 1.0f;
+static float g_uiSnapHalfW = 0.0f, g_uiSnapHalfH = 0.0f;
+
+static float uiSnapX(float vx)
+{
+    if (!g_uiSnap || g_uiSnapScale <= 0.0f) return vx;
+    float dev = floorf((vx + g_uiSnapHalfW) * g_uiSnapScale + 0.5f);
+    return dev / g_uiSnapScale - g_uiSnapHalfW;
+}
+static float uiSnapY(float vy)
+{
+    if (!g_uiSnap || g_uiSnapScale <= 0.0f) return vy;
+    float dev = floorf((vy + g_uiSnapHalfH) * g_uiSnapScale + 0.5f);
+    return dev / g_uiSnapScale - g_uiSnapHalfH;
+}
+
 static void uiBegin(UiState *ui)
 {
 #ifdef SOOB_SOFTWARE_BACKEND
@@ -543,6 +572,11 @@ static void uiBegin(UiState *ui)
     float halfW = ui->virtualW * 0.5f;
     float halfH = ui->virtualH * 0.5f;
     glOrtho(-halfW, +halfW, +halfH, -halfH, -1, 1);
+    /* Publish the virtual->device transform so the quad emitters can pixel-snap
+       (uiSnapX/uiSnapY). Matches the software path's g_swScale. */
+    g_uiSnapHalfW = halfW;
+    g_uiSnapHalfH = halfH;
+    g_uiSnapScale = (ui->virtualH > 0.0f) ? (float)ui->screenH / ui->virtualH : 1.0f;
     glMatrixMode(GL_MODELVIEW);
     glPushMatrix();
     glLoadIdentity();
@@ -601,13 +635,15 @@ static void uiQuad(UiRect r, UiColor c)
         return;
     }
 #endif
+    float x0 = uiSnapX(r.x), x1 = uiSnapX(r.x + r.w);
+    float y0 = uiSnapY(r.y), y1 = uiSnapY(r.y + r.h);
     glDisable(GL_TEXTURE_2D);
     glColor4f(c.r, c.g, c.b, c.a);
     glBegin(GL_QUADS);
-        glVertex2f(r.x,       r.y);
-        glVertex2f(r.x + r.w, r.y);
-        glVertex2f(r.x + r.w, r.y + r.h);
-        glVertex2f(r.x,       r.y + r.h);
+        glVertex2f(x0, y0);
+        glVertex2f(x1, y0);
+        glVertex2f(x1, y1);
+        glVertex2f(x0, y1);
     glEnd();
 }
 
@@ -621,14 +657,16 @@ static void uiIcon(UiRect r, GLuint tex)
         return;
     }
 #endif
+    float x0 = uiSnapX(r.x), x1 = uiSnapX(r.x + r.w);
+    float y0 = uiSnapY(r.y), y1 = uiSnapY(r.y + r.h);
     glEnable(GL_TEXTURE_2D);
     glBindTexture(GL_TEXTURE_2D, tex);
     glColor4f(1, 1, 1, 1);
     glBegin(GL_QUADS);
-        glTexCoord2f(0, 0); glVertex2f(r.x,       r.y);
-        glTexCoord2f(1, 0); glVertex2f(r.x + r.w, r.y);
-        glTexCoord2f(1, 1); glVertex2f(r.x + r.w, r.y + r.h);
-        glTexCoord2f(0, 1); glVertex2f(r.x,       r.y + r.h);
+        glTexCoord2f(0, 0); glVertex2f(x0, y0);
+        glTexCoord2f(1, 0); glVertex2f(x1, y0);
+        glTexCoord2f(1, 1); glVertex2f(x1, y1);
+        glTexCoord2f(0, 1); glVertex2f(x0, y1);
     glEnd();
     glDisable(GL_TEXTURE_2D);
 }
@@ -646,14 +684,16 @@ static void uiIconUV(UiRect r, GLuint tex,
         return;
     }
 #endif
+    float x0 = uiSnapX(r.x), x1 = uiSnapX(r.x + r.w);
+    float y0 = uiSnapY(r.y), y1 = uiSnapY(r.y + r.h);
     glEnable(GL_TEXTURE_2D);
     glBindTexture(GL_TEXTURE_2D, tex);
     glColor4f(1, 1, 1, 1);
     glBegin(GL_QUADS);
-        glTexCoord2f(u0, v0); glVertex2f(r.x,       r.y);
-        glTexCoord2f(u1, v0); glVertex2f(r.x + r.w, r.y);
-        glTexCoord2f(u1, v1); glVertex2f(r.x + r.w, r.y + r.h);
-        glTexCoord2f(u0, v1); glVertex2f(r.x,       r.y + r.h);
+        glTexCoord2f(u0, v0); glVertex2f(x0, y0);
+        glTexCoord2f(u1, v0); glVertex2f(x1, y0);
+        glTexCoord2f(u1, v1); glVertex2f(x1, y1);
+        glTexCoord2f(u0, v1); glVertex2f(x0, y1);
     glEnd();
     glDisable(GL_TEXTURE_2D);
 }
@@ -673,14 +713,16 @@ static void uiIconUVColor(UiRect r, GLuint tex,
         return;
     }
 #endif
+    float x0 = uiSnapX(r.x), x1 = uiSnapX(r.x + r.w);
+    float y0 = uiSnapY(r.y), y1 = uiSnapY(r.y + r.h);
     glEnable(GL_TEXTURE_2D);
     glBindTexture(GL_TEXTURE_2D, tex);
     glColor4f(cr, cg, cb, ca);
     glBegin(GL_QUADS);
-        glTexCoord2f(u0, v0); glVertex2f(r.x,       r.y);
-        glTexCoord2f(u1, v0); glVertex2f(r.x + r.w, r.y);
-        glTexCoord2f(u1, v1); glVertex2f(r.x + r.w, r.y + r.h);
-        glTexCoord2f(u0, v1); glVertex2f(r.x,       r.y + r.h);
+        glTexCoord2f(u0, v0); glVertex2f(x0, y0);
+        glTexCoord2f(u1, v0); glVertex2f(x1, y0);
+        glTexCoord2f(u1, v1); glVertex2f(x1, y1);
+        glTexCoord2f(u0, v1); glVertex2f(x0, y1);
     glEnd();
     glDisable(GL_TEXTURE_2D);
 }
