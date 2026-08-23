@@ -69,7 +69,7 @@ and WASM builds use, so behaviour is identical on all three platforms. No LuaJ,
 no LuaJava: they are Lua 5.1-*ish* reimplementations, and they would throw away
 `bridge.c`.
 
-`app/src/main/cpp/CMakeLists.txt` points at the sibling
+`soob-player/src/main/cpp/CMakeLists.txt` points at the sibling
 `../SOOB-Core/vendor/lua-5.1.5/src` with the same exclusions `build-lua.sh`
 uses (`lua.c`, `luac.c`, `print.c`, `lua_all.c`) and compiles `bridge_jni.c`
 beside it into `libsoob.so`.
@@ -117,10 +117,10 @@ a filesystem — `AAssetManager` has no `fopen`. Two options:
 | `input.ts` | `GameView.kt` | `onTouchEvent` / `onKeyDown` / `onKeyUp` → the same virtual-coord transform and the same held-state sets. |
 | `ime.ts` | `Ime.kt` | Hidden `EditText` + `InputMethodManager`; the value-diff → `onTextInput` logic ports as-is. |
 | `loop.ts` | `Renderer.onDrawFrame` | `GLSurfaceView`, `RENDERMODE_CONTINUOUSLY`; `dt` from `System.nanoTime()`, clamped to 0.1 s like the web loop. |
-| `mobile.ts` | `GameActivity.kt` | Immersive fullscreen, landscape lock, cutout handling, back button, lifecycle. |
+| `mobile.ts` | `SoobActivity.kt` | Immersive fullscreen, landscape lock, cutout handling, back button, lifecycle. |
 | `lua.ts` | `Lua.kt` | `external fun` declarations for the `soob_*` natives. |
 | `bindings.ts` | `Host.kt` | The object `bridge_jni.c` calls — one method per binding, delegating to the modules above. Signatures mirror `globalThis.__SOOB` exactly. |
-| `game/main.ts` | `GameActivity.boot()` | Same order: renderer → host → Lua VM → `assets.lua` → **await decode** → `main.lua` → `onStart` → loop. |
+| `game/main.ts` | `GameView.bootStep()` | Same order: renderer → host → Lua VM → `assets.lua` → decode (sliced across frames, behind the loading bar) → `main.lua` → `onStart` → loop. |
 
 ### Threading — decide this first, it shapes everything
 
