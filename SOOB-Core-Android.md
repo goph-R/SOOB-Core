@@ -30,9 +30,15 @@ libs 16 KB-aligned. What the plan below left open, and how it was settled:
   checks on the binding argument marshalling all pass. Plus: the 14 JNI entry
   points exported by `libsoob.so` match `Lua.kt`, all 34 host method descriptors
   match the compiled `Host` class, and BMFont parsing passes JVM unit tests
-  against Find5's real `.fnt`. **Not verified: it has never run on a device** — this
-  machine has no `avdmanager` and a hand-made AVD segfaults, so first boot,
-  rendering, audio and the IME are all still unproven.
+  against Find5's real `.fnt`.
+- **On hardware:** first boot verified on a Redmi (Android 13, armeabi-v7a) —
+  the title screen renders, touch reaches the Lua hooks, Start game runs the
+  level countdown. One fix was needed to get there: FORTIFY had to be turned
+  off for the vendored Lua, because a `TString` keeps its characters after the
+  struct, so `__builtin_object_size(svalue(s))` is 0 and bionic's
+  `__strchr_chk` aborts on `lgc.c`'s weak-table `strchr` during the first
+  `luaL_openlibs`. Emscripten and MinGW have no FORTIFY, so no other host ever
+  saw it. Audio and the IME bridge still want a hands-on pass.
 
 ## Why this is cheaper than the web port was
 
