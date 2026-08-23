@@ -18,10 +18,14 @@ with M0–M4 written and building: debug APK, R8 release APK and an AAB, arm64
 libs 16 KB-aligned. What the plan below left open, and how it was settled:
 
 - **Script loading:** option 1, the `package.loaders` asset searcher.
-- **Game identity:** the shared `app` block is *not* done — it changes three
-  hosts and that call is yours. Interim: an app module overrides
-  `SoobActivity.gameId`, which names the options file. Everything else per-game
-  already lives in the app module's Gradle/res.
+- **Game identity: done** — as `app.lua` beside `assets.lua`, read by all three
+  hosts (`app_info.h`, `src/host/appinfo.ts`, `AppInfo.kt`). It carries `name` /
+  `id` / `orientation` / `description`; see [`SOOB-Lua.md`](SOOB-Lua.md). The
+  desktop no longer hardcodes its window title or save path, the web build feeds
+  its `<title>` and PWA manifest from it, and the Android app module is now
+  `class Find5Activity : SoobActivity()` with nothing to override. What stays
+  per-game in the app module is what Play requires there: `applicationId`, the
+  launcher icon and label, versionCode.
 - **Display cutout:** `SHORT_EDGES` plus a viewport shrunk to the safe insets.
 - **Verified so far:** a desktop harness (`tools/hosttest`) runs the unmodified
   `bridge_jni.c` behind a stub JNI table against Find5's real bundle — the
@@ -266,7 +270,9 @@ exists; 1 is fine before that.
 
 ### Game identity belongs in the bundle
 
-The one wart is that per-game identity is currently *hardcoded per host*: the
+**Implemented — this is `app.lua` now; the section below is why.**
+
+The one wart was that per-game identity used to be *hardcoded per host*: the
 options filename is a literal in the desktop `main.cpp` (`s->optFile`), the web
 PWA manifest says "Find5", and the Android template would repeat it a third
 time. Fix it while the Android host is being written — add an `app` block that

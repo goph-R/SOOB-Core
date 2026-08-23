@@ -144,6 +144,36 @@ so the Lua name and the C string must stay in lockstep.
 > name with the `on` dropped). That's pure Lua on top of the hooks above, not
 > a C binding.
 
+## Game identity — `app.lua`
+
+Beside `assets.lua`, a game names itself once in `app.lua`; every host reads
+that same file, so no host hardcodes a game's name, save-file stem or
+orientation. It is a **flat table of string fields** — the web and Android
+hosts scan it with a `key = "value"` parser rather than a Lua VM, because they
+need it before the VM exists (options load while the state is created).
+
+```lua
+return {
+    name        = "Find5",           -- window title / app label / PWA name
+    id          = "find5",           -- persistence stem: find5.dat
+    orientation = "landscape",       -- "landscape" | "portrait" (mobile hint)
+    description = "Spot the difference — a SOOB-Core game.",
+}
+```
+
+| Field | Desktop | Web | Android |
+|---|---|---|---|
+| `name` | `SDL_WM_SetCaption`, and the per-user config dir | `<title>` + PWA `name` | the log line; the launcher label stays in `res/` (Play requires it there) |
+| `id` | `<id>.dat` under `%APPDATA%\<name>` / `~/.config/<name>` | the `localStorage` key | `<filesDir>/<id>.dat` |
+| `orientation` | ignored (`config.lua` sizes the window) | PWA `orientation` | `requestedOrientation` |
+| `description` | — | PWA `description` | — |
+
+The save format is identical everywhere, so a `<id>.dat` written on the desktop
+loads on the phone. Missing file or missing field → the host's generic defaults
+(`SOOB` / `soob` / landscape); a bundle without `app.lua` still runs, it just
+isn't named. Readers: `app_info.h` (desktop), `src/host/appinfo.ts` (web),
+`AppInfo.kt` (Android).
+
 ## Assets
 
 The names passed to `soundPlay` / `musicPlay` / `drawRegion` / `drawBg` /

@@ -21,6 +21,7 @@ ui.h              2D virtual-canvas primitives, BMFont, alignment
 sound.h           OpenAL wrapper + SoundLibrary
 music.h           Streaming Ogg Vorbis + crossfade
 asset_registry.h  Name -> path + Region (atlas sub-rect) lookup
+app_info.h        Game identity from app.lua (name / id / orientation)
 script.h          Lua 5.1 glue + bindings + on* hook helpers
 config.h          Config file + CLI arg parsing
 vendor/           SDL 1.2 (Win98), Lua 5.1.5, stb_image, stb_vorbis
