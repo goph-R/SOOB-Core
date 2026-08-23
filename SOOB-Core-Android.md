@@ -23,10 +23,14 @@ libs 16 KB-aligned. What the plan below left open, and how it was settled:
   `SoobActivity.gameId`, which names the options file. Everything else per-game
   already lives in the app module's Gradle/res.
 - **Display cutout:** `SHORT_EDGES` plus a viewport shrunk to the safe insets.
-- **Verified so far:** the 14 JNI entry points exported by `libsoob.so` match
-  `Lua.kt`, all 34 host method descriptors in `bridge_jni.c` match the compiled
-  `Host` class, and BMFont parsing/measuring passes JVM unit tests against
-  Find5's real `.fnt`. **Not verified: it has never run on a device** — this
+- **Verified so far:** a desktop harness (`tools/hosttest`) runs the unmodified
+  `bridge_jni.c` behind a stub JNI table against Find5's real bundle — the
+  sandbox, the asset searcher (`require`), the `assets.lua` walk, hook dispatch,
+  the options round-trip in the desktop file format, and 42 value-by-value
+  checks on the binding argument marshalling all pass. Plus: the 14 JNI entry
+  points exported by `libsoob.so` match `Lua.kt`, all 34 host method descriptors
+  match the compiled `Host` class, and BMFont parsing passes JVM unit tests
+  against Find5's real `.fnt`. **Not verified: it has never run on a device** — this
   machine has no `avdmanager` and a hand-made AVD segfaults, so first boot,
   rendering, audio and the IME are all still unproven.
 
