@@ -38,7 +38,10 @@ libs 16 KB-aligned. What the plan below left open, and how it was settled:
   struct, so `__builtin_object_size(svalue(s))` is 0 and bionic's
   `__strchr_chk` aborts on `lgc.c`'s weak-table `strchr` during the first
   `luaL_openlibs`. Emscripten and MinGW have no FORTIFY, so no other host ever
-  saw it. Audio and the IME bridge still want a hands-on pass.
+  saw it. With that fixed, Find5 plays end to end on the device — rendering,
+  touch, audio and the soft-keyboard bridge all confirmed by hand. The plan
+  below is delivered through M5; the launcher icon and the store listing are
+  what remain.
 
 ## Why this is cheaper than the web port was
 
