@@ -156,8 +156,9 @@ need it before the VM exists (options load while the state is created).
 return {
     name        = "Find5",           -- window title / app label / PWA name
     id          = "find5",           -- persistence stem: find5.dat
-    orientation = "landscape",       -- "landscape" | "portrait" (mobile hint)
+    orientation = "landscape",       -- "landscape" | "portrait"
     description = "Spot the difference — a SOOB-Core game.",
+    background  = "#14141f",         -- clear colour, all three hosts
 }
 ```
 
@@ -165,8 +166,26 @@ return {
 |---|---|---|---|
 | `name` | `SDL_WM_SetCaption`, and the per-user config dir | `<title>` + PWA `name` | the log line; the launcher label stays in `res/` (Play requires it there) |
 | `id` | `<id>.dat` under `%APPDATA%\<name>` / `~/.config/<name>` | the `localStorage` key | `<filesDir>/<id>.dat` |
-| `orientation` | ignored (`config.lua` sizes the window) | PWA `orientation` | `requestedOrientation` |
+| `orientation` | ignored (`config.lua` sizes the window) | PWA `orientation` + the rotate prompt | `requestedOrientation` |
 | `description` | — | PWA `description` | — |
+| `background` | `glClearColor` / software clear | `theme-color`, page + PWA colours | `glClearColor` + the generated window/icon colour |
+
+`background` is `"#rrggbb"`; anything else falls back to each host's default
+rather than going black.
+
+**`config.lua` is desktop-only.** Every field in it (`width`, `height`,
+`fullscreen`, `vsync`, `render`, `depth`) describes a desktop window, so the
+web and Android players do not copy or read it — the canvas sizes itself to the
+viewport there, and neither has a software backend. Anything that needs to
+reach all three hosts belongs in `app.lua`.
+
+**Keep the values plain.** The desktop reads `app.lua` with a real `lua_State`,
+but the web and Android hosts scan it with a `key = "value"` regex (they need
+the values before a VM exists). An embedded escaped quote therefore diverges —
+`name = "The \"Big\" One"` is `The "Big" One` on the desktop and `The \` on
+the other two. Stick to plain text, no `\"` and no backslashes, and all three
+agree. On Android the name also becomes a string resource, where `'` and `"`
+are escaped for aapt2 automatically.
 
 The save format is identical everywhere, so a `<id>.dat` written on the desktop
 loads on the phone. Missing file or missing field → the host's generic defaults

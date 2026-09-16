@@ -6,25 +6,32 @@ OpenAL Soft 1.9.563) through modern Linux / Windows 10.
 
 Headers-only — no build artifacts of its own. Consumers compile their
 own `main.cpp` and `#include` the engine headers as part of a single
-translation unit. Two projects currently consume SOOB-Core:
+translation unit. Three projects currently consume SOOB-Core:
 
+- **goph-R/SOOB-Template** — the clone-and-rename starter for a new 2D game.
 - **goph-R/Find5** — 2D spot-the-difference game.
 - **goph-R/SOOB-Engine** — 3D FPS engine demo (uses the 2D + audio +
-  scripting parts; 3D-specific headers live in that repo).
+  scripting parts; 3D-specific headers live in that repo). It keeps its own
+  `main.cpp` — `soob_main.h` below is for 2D games.
 
 ## Layout
 
 ```
+soob_main.h       The whole 2D host: soobRun() — boot, frame loop, shutdown
 math.h            Vec2 / Vec3 type definitions
 texture.h         PNG loader + TexCache + TexBlurCache
 ui.h              2D virtual-canvas primitives, BMFont, alignment
 sound.h           OpenAL wrapper + SoundLibrary
 music.h           Streaming Ogg Vorbis + crossfade
 asset_registry.h  Name -> path + Region (atlas sub-rect) lookup
-app_info.h        Game identity from app.lua (name / id / orientation)
+app_info.h        Game identity from app.lua (name / id / orientation / background)
 script.h          Lua 5.1 glue + bindings + on* hook helpers
 config.h          Config file + CLI arg parsing
-vendor/           SDL 1.2 (Win98), Lua 5.1.5, stb_image, stb_vorbis
+build/            Shared build fragments: soob.mk, soob.cmake, build_win10.bat
+scripts/engine/   Lua modules mirrored next to each game's exe at build time:
+                  scene, widget, animation, transition, dialog
+vendor/           SDL 1.2 (Win98), Lua 5.1.5, stb_image, stb_vorbis,
+                  and the runtime SDL.dll / OpenAL32.dll the Windows builds copy
 vendor_win10/     SDL/OpenAL headers + libs for the Win10 toolchain
 ```
 
@@ -33,7 +40,25 @@ vendor_win10/     SDL/OpenAL headers + libs for the Win10 toolchain
 Consumers point at this folder with `-I../SOOB-Core/` (sibling-folder
 layout) so existing `#include "script.h"` paths resolve without change.
 
-The intent is that updates to the engine apply to both games — adding
+A 2D game includes exactly one header and writes no host code:
+
+```cpp
+#include "soob_main.h"
+int main(int argc, char *argv[]) { return soobRun(argc, argv, 0); }
+```
+
+`soob_main.h` owns the include order, defines `conLogf`, and runs the whole
+frame loop. A game with native bindings fills a `SoobApp` and sets
+`onRegister`; a game with its own dev console defines `SOOB_CUSTOM_CONLOG` and
+supplies its own `conLogf`. Its four build systems reduce to stubs over
+`build/soob.mk`, `build/soob.cmake` and `build/build_win10.bat` — see
+SOOB-Template.
+
+The Win98 `build.bat` is deliberately **not** shared: COMMAND.COM reopens a
+batch file per line and cannot parse `setlocal`, quoted `set` or parenthesised
+if-blocks, so each game keeps a goto-only copy with a single `set NAME=` line.
+
+The intent is that updates to the engine apply to every game — adding
 a Lua binding, fixing a texture-cache bug, etc. — without manual port
 between repos.
 

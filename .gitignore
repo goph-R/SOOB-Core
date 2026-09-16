@@ -1,7 +1,11 @@
 # Win10 build - portable MinGW (download separately, ~250MB)
 vendor_win10/mingw32/
-vendor_win10/SDL.dll
 libwinpthread-1.dll
+
+# Optional full OpenAL Soft build for Win10 (~4MB, download separately).
+# The small i386 runtime in vendor/OpenAL32.dll is tracked and serves both
+# Windows targets; see vendor_win10/README.md.
+vendor_win10/OpenAL32.dll
 
 # Editor / OS noise
 .vscode/

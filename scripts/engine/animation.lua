@@ -57,6 +57,13 @@ M.easeInOutExpo = function(t)
     return 1 - 0.5 * 2 ^ (-20 * t + 10)
 end
 
+-- Exponential ease in — barely moves, then accelerates away. The mirror of
+-- easeOut's feel; used for "shoots off the top" exits.
+M.easeInExpo = function(t)
+    if t <= 0 then return 0 end
+    return 2 ^ (10 * (t - 1))
+end
+
 -- Overshoots past 1, then settles — classic "pop in" feel.
 local BACK_S = 1.70158
 M.easeOutBack = function(t)

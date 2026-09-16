@@ -27,12 +27,14 @@ extern "C" {
 #define APP_ID_MAX    64
 #define APP_ORIENT_MAX 16
 #define APP_DESC_MAX  192
+#define APP_BG_MAX    8    /* "#rrggbb" + NUL */
 
 struct AppInfo {
     char name[APP_NAME_MAX];          /* window title / app label */
     char id[APP_ID_MAX];              /* persistence stem: <id>.dat */
     char orientation[APP_ORIENT_MAX]; /* "landscape" | "portrait" (mobile hint) */
     char description[APP_DESC_MAX];   /* one line, for store / manifest use */
+    char background[APP_BG_MAX];      /* "#rrggbb" clear colour, every host */
 };
 
 static AppInfo appInfoLoadDefaults(void)
@@ -44,6 +46,8 @@ static AppInfo appInfoLoadDefaults(void)
     snprintf(a.id, sizeof(a.id), "%s", "soob");
     snprintf(a.orientation, sizeof(a.orientation), "%s", "landscape");
     a.description[0] = '\0';
+    /* The colour every host cleared to before app.lua owned it. */
+    snprintf(a.background, sizeof(a.background), "%s", "#14141f");
     return a;
 }
 
@@ -69,8 +73,32 @@ static void appInfoLoadFromFile(AppInfo *a, const char *path)
         appInfoCopyField(L, "id", a->id, sizeof(a->id));
         appInfoCopyField(L, "orientation", a->orientation, sizeof(a->orientation));
         appInfoCopyField(L, "description", a->description, sizeof(a->description));
+        appInfoCopyField(L, "background", a->background, sizeof(a->background));
     }
     lua_close(L);
+}
+
+/* Parse the "#rrggbb" background into 0..1 floats. Anything malformed leaves
+   the outputs untouched, so a caller that pre-seeds them with its own default
+   keeps that default rather than going black. Case-insensitive; a leading '#'
+   is optional. */
+static void appInfoBackgroundRgb(const AppInfo *a, float *r, float *g, float *b)
+{
+    const char *s = a->background;
+    if (*s == '#') s++;
+    if (strlen(s) != 6) return;
+
+    int v[6];
+    for (int i = 0; i < 6; i++) {
+        char c = s[i];
+        if      (c >= '0' && c <= '9') v[i] = c - '0';
+        else if (c >= 'a' && c <= 'f') v[i] = c - 'a' + 10;
+        else if (c >= 'A' && c <= 'F') v[i] = c - 'A' + 10;
+        else return;                  /* not hex — leave the defaults alone */
+    }
+    *r = (v[0] * 16 + v[1]) / 255.0f;
+    *g = (v[2] * 16 + v[3]) / 255.0f;
+    *b = (v[4] * 16 + v[5]) / 255.0f;
 }
 
 /* Convenience for the usual desktop call site: fill `out` with "<id>.dat". */

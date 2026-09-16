@@ -2,8 +2,30 @@
 
 See `README.md` for the architecture and the Win98 build constraints (no
 C++11, fixed-function GL only, header-only `static` functions). This file
-covers coding conventions for SOOB-Core and its consumers (Find5,
-SOOB-Engine).
+covers coding conventions for SOOB-Core and its consumers (SOOB-Template,
+Find5, SOOB-Engine).
+
+## Where a change belongs
+
+Host loop, build boilerplate and reusable Lua modules live **here**, not in a
+game repo — that is the whole point of the split:
+
+- `soob_main.h` is the 2D host (`soobRun`). A 2D game's `main.cpp` is three
+  lines; never reintroduce a per-game frame loop. SOOB-Engine is the exception
+  and keeps its own `main.cpp` — do not retrofit it onto `soobRun`.
+- `build/soob.mk`, `build/soob.cmake`, `build/build_win10.bat` are the real
+  build systems; a game's equivalents are stubs. **`build.bat` (Win98) is the
+  deliberate exception** — COMMAND.COM reopens a batch file per line and has no
+  `setlocal` / `%~1` / parenthesised if-blocks, so it stays a per-game copy with
+  one `set NAME=` line. Do not try to share it.
+- `scripts/engine/*.lua` is mirrored next to each game's exe at build time. A
+  game that edits its local `scripts/engine/` is editing a generated copy;
+  the fix belongs here.
+
+Note `script.h` puts `./scripts/?.lua` **before** `../SOOB-Core/scripts/?.lua`
+on `package.path`. A stale mirror therefore shadows this directory silently and
+can mix an old module with a new one — re-run the game's build after changing
+anything under `scripts/engine/`.
 
 ## Lua naming convention
 

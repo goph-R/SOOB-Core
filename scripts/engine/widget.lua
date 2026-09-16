@@ -258,6 +258,41 @@ end
 --   flip                FLIP_H | FLIP_V bitmask
 --   alpha, scale        animatable — same semantics as every other widget
 
+-- ---- Quad -----------------------------------------------------------------
+--
+-- A flat colour rectangle with animatable alpha. The simplest widget there
+-- is: no text, no region, no input. Useful for dim backdrops behind modals,
+-- letterbox bars, and full-screen flash overlays.
+--
+-- Spec: x, y, width, height, color = { r, g, b [, a] }
+--
+-- Like every widget it exposes visible / alpha / scale, so a parent panel
+-- cascades alpha through it the same way it does for labels and images.
+
+function M.quad(spec)
+    local q = {
+        x = spec.x or 0, y = spec.y or 0,
+        width = spec.width or 0, height = spec.height or 0,
+        color = spec.color or { 0, 0, 0, 1 },
+        visible = true, disabled = false, focusable = false,
+        alpha = 1.0, scale = 1.0,
+    }
+    function q:draw()
+        if not self.visible or self.alpha <= 0 then return end
+        local c = self.color
+        drawQuad(self.x, self.y, self.width, self.height, {
+            color = { c[1], c[2], c[3], (c[4] or 1.0) * self.alpha },
+        })
+    end
+    function q:hit()       return false end
+    function q:mouseDown() return false end
+    function q:mouseUp()   return false end
+    function q:mouseMove() end
+    function q:keyDown()   return false end
+    function q:keyUp()     return false end
+    return q
+end
+
 function M.image(spec)
     local x, y = spec.x or 0, spec.y or 0
     local w_, h_ = spec.width, spec.height
