@@ -14,6 +14,14 @@ translation unit. Three projects currently consume SOOB-Core:
   scripting parts; 3D-specific headers live in that repo). It keeps its own
   `main.cpp` — `soob_main.h` below is for 2D games.
 
+Separately, the **players** reimplement the binding surface in
+[`SOOB-Lua.md`](SOOB-Lua.md) for their platform and run the same game bundle
+unchanged. Their plans live here:
+
+- **goph-R/SOOB-Core-Web** — browser runtime — [`SOOB-Core-Web.md`](SOOB-Core-Web.md)
+- **goph-R/SOOB-Core-Android** — Android player — [`SOOB-Core-Android.md`](SOOB-Core-Android.md)
+- iOS — not started — [`SOOB-Core-iOS.md`](SOOB-Core-iOS.md)
+
 ## Layout
 
 ```
