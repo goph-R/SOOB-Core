@@ -97,7 +97,7 @@ Everything from `optNum`/`optStr` down through the `scr*` wrappers and the
 | `EM_JS(void, js_drawRegion, …)` | cached `jmethodID` → `Host.drawRegion(String, DoubleBuffer)` |
 | `HEAPF64.subarray(a>>3, …)` — zero-copy view of the C scratch array | `NewDirectByteBuffer(g_args, sizeof g_args).asDoubleBuffer()` — created **once** at init, also zero-copy |
 | `UTF8ToString(s)` | `NewStringUTF` (bindings are ASCII today — see risks) |
-| exported `_soob_*` called via `ccall`/`cwrap` | `JNIEXPORT` `Java_info_dynart_soob_Lua_*` natives |
+| exported `_soob_*` called via `ccall`/`cwrap` | `JNIEXPORT` `Java_net_dynart_soob_Lua_*` natives |
 
 The JNI env is cached per thread; the Lua VM and all bindings live on **one**
 thread (the GL thread — see Threading), so one cached `JNIEnv*` plus a global
@@ -227,13 +227,13 @@ SOOB-Core-Android/
                                                   externalNativeBuild { cmake }
   soob-player/src/main/cpp/CMakeLists.txt         lua-5.1.5 (from ../SOOB-Core) + bridge_jni.c -> libsoob.so
   soob-player/src/main/cpp/bridge_jni.c           bridge.c with JNI host imports
-  soob-player/src/main/java/info/dynart/soob/
+  soob-player/src/main/java/net/dynart/soob/
       SoobActivity.kt  GameView.kt  Renderer.kt  Host.kt  Lua.kt
       Assets.kt  BmFont.kt  Audio.kt  Input.kt  Ime.kt
   soob-player/syncGame.gradle                     the bundle-copy task, parameterised by game dir
 
   app/build.gradle                                com.android.application — identity only:
-                                                  applicationId "info.dynart.find5"
+                                                  applicationId "net.dynart.find5"
                                                   targetSdk 36, versionCode/Name, signing
                                                   soobGame = "../../Find5"
   app/src/main/AndroidManifest.xml                launcher intent + SoobActivity (or a 5-line subclass)
