@@ -8,7 +8,7 @@ Headers-only — no build artifacts of its own. Consumers compile their
 own `main.cpp` and `#include` the engine headers as part of a single
 translation unit. Three projects currently consume SOOB-Core:
 
-- **goph-R/SOOB-Template** — the clone-and-rename starter for a new 2D game.
+- **goph-R/SOOB-Core-Template** — the clone-and-rename starter for a new 2D game.
 - **goph-R/Find5** — 2D spot-the-difference game.
 - **goph-R/SOOB-Engine** — 3D FPS engine demo (uses the 2D + audio +
   scripting parts; 3D-specific headers live in that repo). It keeps its own
@@ -52,7 +52,7 @@ frame loop. A game with native bindings fills a `SoobApp` and sets
 `onRegister`; a game with its own dev console defines `SOOB_CUSTOM_CONLOG` and
 supplies its own `conLogf`. Its four build systems reduce to stubs over
 `build/soob.mk`, `build/soob.cmake` and `build/build_win10.bat` — see
-SOOB-Template.
+SOOB-Core-Template.
 
 The Win98 `build.bat` is deliberately **not** shared: COMMAND.COM reopens a
 batch file per line and cannot parse `setlocal`, quoted `set` or parenthesised

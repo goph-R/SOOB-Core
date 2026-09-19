@@ -2,7 +2,7 @@
 
 See `README.md` for the architecture and the Win98 build constraints (no
 C++11, fixed-function GL only, header-only `static` functions). This file
-covers coding conventions for SOOB-Core and its consumers (SOOB-Template,
+covers coding conventions for SOOB-Core and its consumers (SOOB-Core-Template,
 Find5, SOOB-Engine).
 
 ## Where a change belongs
