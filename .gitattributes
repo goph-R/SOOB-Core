@@ -1,0 +1,8 @@
+# Windows batch and cmd files MUST have CRLF line endings. cmd.exe (and
+# Win98's COMMAND.COM) parse LF-only batch files incorrectly. core.autocrlf
+# alone is not enough under `input` mode, so pin the ending explicitly.
+*.bat      text eol=crlf
+*.cmd      text eol=crlf
+
+# Shell scripts -- always LF.
+*.sh       text eol=lf

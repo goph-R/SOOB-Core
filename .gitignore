@@ -13,3 +13,11 @@ vendor_win10/OpenAL32.dll
 *.swp
 *~
 .DS_Store
+
+# FLTK: built static libs (sources and support files stay tracked)
+vendor/fltk-1.3/FL/lib/
+vendor/fltk-1.3/FL/lib_w10/
+
+# Build objects (FLTK objects land in raw/obj/fltk*, test binaries anywhere)
+raw/obj/
+*.exe
