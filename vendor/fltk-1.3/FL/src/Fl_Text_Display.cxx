@@ -30,6 +30,9 @@
 #include <FL/Fl_Text_Buffer.H>
 #include <FL/Fl_Text_Display.H>
 #include <FL/Fl_Window.H>
+#ifdef WIN32
+#  include <FL/x.H>            // SOOB patch: fl_gc / BitBlt for the scroll copy
+#endif
 
 #undef min
 #undef max
@@ -64,6 +67,24 @@
 #define HIGHLIGHT_MASK    0x0800
 #define BG_ONLY_MASK      0x1000
 #define TEXT_ONLY_MASK    0x2000
+
+// SOOB patches (NOT upstream FLTK) -- drawing speed on Win98-class machines.
+// File statics rather than members so sizeof(Fl_Text_Display) and the ABI
+// stay unchanged. See docs/editor-fltk-win98.md in SOOB-Core.
+//
+// Line background once: set while handle_vline() draws a line whose plain
+// background it has already painted; draw_string() then skips the per-run
+// background rectangles of unselected runs.
+static int soobLineFilled = 0;
+//
+// Scroll by copying: scroll_() records a pure vertical scroll here, and
+// draw() records the geometry of the image it leaves in the (double-
+// buffered) window, so the next draw() can shift that image instead of
+// repainting every line.
+static const Fl_Text_Display *soobPendWidget = 0;
+static int soobPendLines = 0;
+static const Fl_Text_Display *soobImgWidget = 0;
+static int soobImgX, soobImgY, soobImgW, soobImgH, soobImgLineH, soobImgHoriz;
 #define STYLE_LOOKUP_MASK   0xff
 
 /* Maximum displayable line length (how many characters will fit across the
@@ -2025,6 +2046,12 @@ int Fl_Text_Display::handle_vline(
   }
 
   char currChar = 0, prevChar = 0;
+  // SOOB patch: paint the line's plain background in one go; draw_string()
+  // then draws unselected runs as text only (see soobLineFilled).
+  if (mode == DRAW_LINE) {
+    draw_string( BG_ONLY_MASK, text_area.x, Y, text_area.x+text_area.w, 0, 0 );
+    soobLineFilled = 1;
+  }
   // draw the line
   style = position_style(lineStartPos, lineLen, 0);
   for (i=0; i<lineLen; ) {
@@ -2102,6 +2129,7 @@ int Fl_Text_Display::handle_vline(
   style = position_style(lineStartPos, lineLen, i);
   if (mode==DRAW_LINE)
     draw_string( style|BG_ONLY_MASK, startX, Y, text_area.x+text_area.w, lineStr, lineLen );
+  soobLineFilled = 0;
 
   free(lineStr);
   IS_UTF8_ALIGNED2(buffer(), (lineStartPos+lineLen))
@@ -2205,6 +2233,13 @@ void Fl_Text_Display::draw_string(int style,
   IS_UTF8_ALIGNED(string)
 
   const Style_Table_Entry * styleRec;
+
+  // SOOB patch: handle_vline() already painted this line's plain background,
+  // so an unselected run needs only its text (one colour change, no rect).
+  if (soobLineFilled && !(style & (PRIMARY_MASK|SECONDARY_MASK|HIGHLIGHT_MASK))) {
+    if (style & (BG_ONLY_MASK|FILL_MASK)) return;
+    style |= TEXT_ONLY_MASK;
+  }
 
   /* Draw blank area rather than text, if that was the request */
   if ( style & FILL_MASK ) {
@@ -2877,6 +2912,16 @@ int Fl_Text_Display::scroll_(int topLineNum, int horizOffset) {
    window to draw in yet */
   if (mHorizOffset == horizOffset && mTopLineNum == topLineNum)
     return 0;
+
+  // SOOB patch: remember a pure vertical scroll for the copy in draw().
+  // Several scrolls before one draw add up; a horizontal one cancels it.
+  if (horizOffset == mHorizOffset) {
+    if (soobPendWidget != this) { soobPendWidget = this; soobPendLines = 0; }
+    soobPendLines += topLineNum - mTopLineNum;
+  } else {
+    soobPendWidget = 0;
+    soobPendLines = 0;
+  }
 
   /* If the vertical scroll position has changed, update the line
    starts array and related counters in the text display */
@@ -3770,8 +3815,49 @@ void Fl_Text_Display::draw(void) {
   update_child(*mVScrollBar);
   update_child(*mHScrollBar);
 
+  // SOOB patch: scroll by copying. After a pure vertical scroll, shift the
+  // image already in the window's offscreen buffer by whole lines and draw
+  // only the lines that scrolled in -- one line per step while holding an
+  // arrow key, instead of every visible line. Only in a double-buffered
+  // window (its offscreen copy is always complete; a plain window's screen
+  // pixels may be covered), only if the text area, line height and
+  // horizontal offset still match the image, and only for a jump smaller
+  // than the view. Anything else repaints fully, as upstream does. Lines
+  // marked by redisplay_range() (old / new cursor line) are drawn after it.
+  int soobCopied = 0;
+#ifdef WIN32
+  {
+    int n = (soobPendWidget == this) ? soobPendLines : 0;
+    int h = mMaxsize;
+    Fl_Window *win = window();
+    if (n && h > 0 && !(damage() & FL_DAMAGE_ALL) &&
+        soobImgWidget == this &&
+        soobImgX == text_area.x && soobImgY == text_area.y &&
+        soobImgW == text_area.w && soobImgH == text_area.h &&
+        soobImgLineH == h && soobImgHoriz == mHorizOffset &&
+        (n < 0 ? -n : n) < mNVisibleLines - 1 &&
+        win && win->type() == FL_DOUBLE_WINDOW &&
+        Fl_Surface_Device::surface() == Fl_Display_Device::display_device()) {
+      int X = text_area.x, Y = text_area.y, W = text_area.w, H = text_area.h;
+      int dy = n * h, stripY, stripH;
+      if (n > 0) {                       // view moved down: image goes up
+        BitBlt(fl_gc, X, Y, W, H - dy, fl_gc, X, Y + dy, SRCCOPY);
+        stripY = Y + (mNVisibleLines - 1 - n) * h;   // incl. the partial last line
+        if (stripY < Y) stripY = Y;
+        stripH = Y + H - stripY;
+      } else {                           // view moved up: image goes down
+        BitBlt(fl_gc, X, Y - dy, W, H + dy, fl_gc, X, Y, SRCCOPY);
+        stripY = Y;
+        stripH = -dy;
+      }
+      draw_text(X, stripY, W, stripH);
+      soobCopied = 1;
+    }
+  }
+#endif
+
   // draw all of the text
-  if (damage() & (FL_DAMAGE_ALL | FL_DAMAGE_EXPOSE)) {
+  if (!soobCopied && (damage() & (FL_DAMAGE_ALL | FL_DAMAGE_EXPOSE))) {
     //printf("drawing all text\n");
     int X, Y, W, H;
     if (fl_clip_box(text_area.x, text_area.y, text_area.w, text_area.h,
@@ -3784,12 +3870,13 @@ void Fl_Text_Display::draw(void) {
       draw_text(text_area.x, text_area.y, text_area.w, text_area.h);
     }
   }
-  else if (damage() & FL_DAMAGE_SCROLL) {
+  else if ((damage() & FL_DAMAGE_SCROLL) || soobCopied) {
     // draw some lines of text
     fl_push_clip(text_area.x, text_area.y,
                  text_area.w, text_area.h);
     //printf("drawing text from %d to %d\n", damage_range1_start, damage_range1_end);
-    draw_range(damage_range1_start, damage_range1_end);
+    if (damage_range1_start != -1)       // SOOB: none after a bare copy
+      draw_range(damage_range1_start, damage_range1_end);
     if (damage_range2_end != -1) {
       //printf("drawing text from %d to %d\n", damage_range2_start, damage_range2_end);
       draw_range(damage_range2_start, damage_range2_end);
@@ -3841,6 +3928,15 @@ void Fl_Text_Display::draw(void) {
   // scrollbar drag, cursor walking off an edge -- moves mTopLineNum and so still
   // repaints. get_absolute_top_line_number() is O(1) (it returns mTopLineNum
   // outright when wrapping is off), so this gate is free.
+  // SOOB patch: what the window's image now shows, for the next copy.
+  if (Fl_Surface_Device::surface() == Fl_Display_Device::display_device()) {
+    soobImgWidget = this;
+    soobImgX = text_area.x;  soobImgY = text_area.y;
+    soobImgW = text_area.w;  soobImgH = text_area.h;
+    soobImgLineH = mMaxsize; soobImgHoriz = mHorizOffset;
+  }
+  if (soobPendWidget == this) { soobPendWidget = 0; soobPendLines = 0; }
+
   {
     int soobTop = get_absolute_top_line_number();
     if ((damage() & (FL_DAMAGE_ALL | FL_DAMAGE_EXPOSE)) || soobTop != mSoobLineNumTop) {

@@ -107,16 +107,31 @@ void Fl_GDI_Graphics_Driver::color(Fl_Color i) {
   }
 }
 
+// SOOB patch (NOT upstream FLTK): upstream keeps ONE Fl_XMap for all RGB
+// colours, so every change to a different RGB colour deletes the pen and
+// creates a new one -- and, since the brush cache is keyed by that xmap, also
+// forgets its brush, so the next fl_rectf() deletes and creates a brush too.
+// A syntax-highlighted Fl_Text_Display alternates background / foreground for
+// every colour run, i.e. two pens and a brush created and destroyed per run;
+// on Win98's 16-bit GDI heap that dominated drawing. Keep the last
+// SOOB_N_RGB colours instead, each with its own pen and (via fl_brush) brush.
+#define SOOB_N_RGB 16
 void Fl_GDI_Graphics_Driver::color(uchar r, uchar g, uchar b) {
-  static Fl_XMap xmap;
+  static Fl_XMap xmaps[SOOB_N_RGB];
+  static int next = 0;
   COLORREF c = RGB(r,g,b);
+  int i;
   Fl_Graphics_Driver::color( fl_rgb_color(r, g, b) );
-  if (!xmap.pen || c != xmap.rgb) {
-    clear_xmap(xmap);
-    set_xmap(xmap, c);
+  for (i = 0; i < SOOB_N_RGB; i++)
+    if (xmaps[i].pen && xmaps[i].rgb == c) break;
+  if (i == SOOB_N_RGB) {                 // not cached: replace the oldest slot
+    i = next;
+    next = (next + 1) % SOOB_N_RGB;
+    clear_xmap(xmaps[i]);
+    set_xmap(xmaps[i], c);
   }
-  fl_current_xmap = &xmap;
-  SelectObject(fl_gc, (HGDIOBJ)(xmap.pen));
+  fl_current_xmap = &xmaps[i];
+  SelectObject(fl_gc, (HGDIOBJ)(xmaps[i].pen));
 }
 
 HBRUSH fl_brush() {
