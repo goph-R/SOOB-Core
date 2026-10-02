@@ -25,6 +25,7 @@
 #include <FL/Fl_Text_Buffer.H>
 #include "edit_code.h"
 #include "edit_find.h"
+#include "edit_match.h"
 
 static int failures = 0;
 #define CHECK(c) do { if (!(c)) { \
@@ -498,6 +499,78 @@ int main(void)
         { char *t = b.text(); CHECK(strcmp(t, "one two one three one\n") == 0); free(t); }
         (void)i;
         codeUndoFree(&u);
+    }
+
+    /* ---------------- pair highlighting (edit_match.h) ---------------- */
+    {
+        T = new Fl_Text_Buffer();      /* the shared pair was freed above */
+        S = new Fl_Text_Buffer();
+        int st[2], ln[2], bad, n;
+        const char *src;
+        /* position of the k-th occurrence of c in src */
+        #define AT(c, k) atNth(src, c, k)
+        struct Local {
+            static int atNth(const char *t, char c, int k)
+            { int i; for (i = 0; t[i]; i++) if (t[i] == c && k-- == 0) return i; return -1; }
+        };
+        #define atNth Local::atNth
+
+        src = "f(a, g(b), \"(\" ) { x[1]; }  // )\n";
+        reset(LEX_LANG_JS, src);
+        /* caret just after the first '(' -> its ')' skips g(...) and the string */
+        n = codeFindPair(T, S, LANG, AT('(', 0) + 1, st, ln, &bad);
+        CHECK(n == 2 && !bad && st[0] == AT('(', 0) && st[1] == AT(')', 1));
+        /* caret ON the '{' (nothing before it is a bracket: a blank) */
+        n = codeFindPair(T, S, LANG, AT('{', 0), st, ln, &bad);
+        CHECK(n == 2 && st[0] == AT('{', 0) && st[1] == AT('}', 0));
+        /* ']' just before the caret matches backwards */
+        n = codeFindPair(T, S, LANG, AT(']', 0) + 1, st, ln, &bad);
+        CHECK(n == 2 && st[0] == AT(']', 0) && st[1] == AT('[', 0));
+        /* the '(' inside the string is ignored */
+        n = codeFindPair(T, S, LANG, AT('(', 2), st, ln, &bad);
+        CHECK(n == 0);
+        /* the ')' in the comment is ignored */
+        n = codeFindPair(T, S, LANG, AT(')', 2) + 1, st, ln, &bad);
+        CHECK(n == 0);
+
+        src = "if (a { b }\n";
+        reset(LEX_LANG_C, src);
+        n = codeFindPair(T, S, LANG, AT('(', 0), st, ln, &bad);
+        CHECK(n == 1 && bad == 1 && st[0] == AT('(', 0));      /* unmatched -> error */
+
+        src = "<div class=\"a\">\n"
+              "  <div><br><img src=\"x\"/><span>(</span></div>\n"
+              "  <!-- <div> -->\n"
+              "</DIV>\n";
+        reset(LEX_LANG_HTML, src);
+        {
+            const char *outer = strstr(src, "div class");
+            const char *close = strstr(src, "DIV>");
+            const char *inner = strstr(outer + 3, "<div>") + 1;
+            const char *innerClose = strstr(src, "</div>") + 2;
+            /* caret inside the outer opening name: matches </DIV>, past the
+             * nested pair and the commented-out <div> (case-insensitive) */
+            n = codeFindPair(T, S, LANG, (int)(outer - src) + 1, st, ln, &bad);
+            CHECK(n == 2 && st[0] == outer - src && ln[0] == 3 && st[1] == close - src);
+            /* and back again from the closing tag, caret on its '<' */
+            n = codeFindPair(T, S, LANG, (int)(close - src) - 2, st, ln, &bad);
+            CHECK(n == 2 && st[0] == close - src && st[1] == outer - src);
+            /* inner pair */
+            n = codeFindPair(T, S, LANG, (int)(inner - src), st, ln, &bad);
+            CHECK(n == 2 && st[0] == inner - src && st[1] == innerClose - src);
+            /* void and self-closing elements highlight nothing */
+            n = codeFindPair(T, S, LANG, (int)(strstr(src, "br>") - src), st, ln, &bad);
+            CHECK(n == 0);
+            n = codeFindPair(T, S, LANG, (int)(strstr(src, "img") - src) + 1, st, ln, &bad);
+            CHECK(n == 0);
+            /* a bracket in HTML text still pairs... and wins over the tag */
+            n = codeFindPair(T, S, LANG, (int)(strstr(src, "(</span") - src) + 1, st, ln, &bad);
+            CHECK(n == 1 && bad == 1);                         /* lone '(' in text */
+        }
+        #undef atNth
+        #undef AT
+        delete T;
+        delete S;
     }
 
     if (failures) { printf("\n%d FAILURE(S)\n", failures); return 1; }

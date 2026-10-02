@@ -50,6 +50,7 @@
 
 #include "edit_lex.h"
 #include "edit_fileio.h"
+#include "edit_match.h"
 
 /* ---- crash-localising trace -------------------------------------------
  * Appends and CLOSES on every call, so a hard crash on the target still leaves
@@ -109,6 +110,9 @@ static void codeTrace(const char *fmt, ...)
 #define CODE_COL_TAB_OFF   CODE_RGB(0xa0, 0xa4, 0xb0)
 /* Column ruler. Dpress draws its margin guide in the marker colour, dotted. */
 #define CODE_COL_RULER     CODE_RGB(0x62, 0x72, 0xa4)
+/* Bracket / tag pair outline (edit_match.h): the line-number tint, so it
+ * reads as a marker, not as another syntax colour. Unmatched: CODE_COL_ERROR. */
+#define CODE_COL_MATCH     CODE_RGB(0x9a, 0xa3, 0xc9)
 
 #ifndef CODE_FONTSIZE
 #define CODE_FONTSIZE 14
@@ -536,6 +540,10 @@ public:
         selection_color(CODE_COL_SEL);
         show_cursor(0);             /* FLTK's caret off -- draw() paints ours */
         mCaretOn = 0;
+        mHlN = 0;
+        mHlBad = 0;
+        mHlCaret = -1;
+        mHlStale = 1;
         mLineNumLines = -1;
         mMaxCols = 0;
         mCharPx  = 0;
@@ -666,6 +674,7 @@ public:
             mLineNumLines = mNBufferLines;
             draw_line_numbers(true);
         }
+        matchDraw();
         caretDraw();
         if (mWrapCol <= 0) return;
 
@@ -1016,6 +1025,7 @@ public:
         mCaretOn = 1;
         if (Fl::focus() == this) Fl::add_timeout(CODE_CARET_BLINK, caretBlinkCb, this);
         caretRedisplay();
+        matchUpdate();
     }
     void caretStop()
     {
@@ -1028,7 +1038,51 @@ public:
         CodeEditor *ed = (CodeEditor *)v;
         ed->mCaretOn = !ed->mCaretOn;
         ed->caretRedisplay();
+        ed->matchUpdate();        /* catches caret moves made from outside (Find, Go to) */
         Fl::repeat_timeout(CODE_CARET_BLINK, caretBlinkCb, v);
+    }
+
+    /* ---- pair highlighting ----------------------------------------------
+     * An outline around the bracket at the caret and its partner (red if it
+     * has none), or around both names of an HTML element (edit_match.h).
+     * Drawn over the text in draw(), like the caret; a change repaints only
+     * the lines of the old and new boxes. Recomputed after every event and on
+     * each blink tick, but skipped while neither the caret nor the text has
+     * moved, so holding the caret still costs nothing. */
+    void matchRedisplay()
+    {
+        int k;
+        for (k = 0; k < mHlN; k++) redisplay_range(mHlStart[k], mHlStart[k] + mHlLen[k]);
+    }
+    void matchUpdate()
+    {
+        int st[2], ln[2], bad = 0, n = 0, k, pos = insert_position();
+        if (pos == mHlCaret && !mHlStale) return;
+        mHlCaret = pos;
+        mHlStale = 0;
+        if (!mTextBuf->selected())
+            n = codeFindPair(mTextBuf, mStyleBuf, mLang, pos, st, ln, &bad);
+        if (n == mHlN && bad == mHlBad) {
+            for (k = 0; k < n; k++)
+                if (st[k] != mHlStart[k] || ln[k] != mHlLen[k]) break;
+            if (k == n) return;                       /* same boxes */
+        }
+        matchRedisplay();                             /* erase the old boxes */
+        mHlN = n;
+        mHlBad = bad;
+        for (k = 0; k < n; k++) { mHlStart[k] = st[k]; mHlLen[k] = ln[k]; }
+        matchRedisplay();                             /* draw the new ones */
+    }
+    void matchDraw()
+    {
+        int k, x, y;
+        if (!mHlN) return;
+        fl_push_clip(text_area.x, text_area.y, text_area.w, text_area.h);
+        fl_color(mHlBad ? CODE_COL_ERROR : CODE_COL_MATCH);
+        for (k = 0; k < mHlN; k++)
+            if (position_to_xy(mHlStart[k], &x, &y))
+                fl_rect(x, y, mHlLen[k] * charPx(), mMaxsize);
+        fl_pop_clip();
     }
     void caretDraw()
     {
@@ -1065,6 +1119,11 @@ private:
     CodeUndo mUndo;
     int mDirty;
     int mCaretOn;                 /* blink phase; drawn only while focused */
+    int mHlN;                     /* pair boxes shown: 0, 1 (unmatched) or 2 */
+    int mHlStart[2], mHlLen[2];
+    int mHlBad;                   /* 1: an unmatched bracket */
+    int mHlCaret;                 /* caret the boxes were computed for */
+    int mHlStale;                 /* text changed since then */
     int mLineNumLines;            /* mNBufferLines at the last margin repaint */
     int mMaxCols;                 /* longest line in the buffer, in columns */
     int mEnc;                     /* CODE_ENC_*: how the file is saved */
@@ -1084,6 +1143,20 @@ private:
         if (nInserted || nDeleted) ed->mDirty = 1;
         ed->styleUpdate(pos, nInserted, nDeleted);
         ed->trackLongest(pos, nInserted, nDeleted, deletedText);
+        ed->matchShift(pos, nInserted, nDeleted);
+    }
+
+    /* Keep the pair boxes on their characters through an edit until the next
+     * matchUpdate() recomputes them (the boxes are redrawn from these
+     * positions, and FLTK repaints the edited lines anyway). */
+    void matchShift(int pos, int nInserted, int nDeleted)
+    {
+        int k;
+        mHlStale = 1;
+        for (k = 0; k < mHlN; k++) {
+            if (mHlStart[k] >= pos + nDeleted) mHlStart[k] += nInserted - nDeleted;
+            else if (mHlStart[k] >= pos) { mHlN = 0; break; }   /* box text deleted */
+        }
     }
 
     /* ---- longest line, for the horizontal scrollbar ---------------------
