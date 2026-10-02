@@ -427,6 +427,60 @@ kept up to date incrementally from the buffer's modify callback (inserts measure
 only the touched lines, a delete rescans only when it could have shortened the
 longest line), and returns `-1` while word wrap is on.
 
+## Local FLTK patches: drawing speed (pen cache, line background, scroll by copying)
+
+**Re-apply if FLTK is ever upgraded.** Performance patches, not correctness
+ones. They came from the code editor feeling ~3x slower in HTML than in
+Markdown on a Pentium II 350, holding an arrow key.
+
+`Fl_Text_Display` draws a line as one *run* per style change, and each run did
+`fl_color(background)` + `fl_rectf()` + `fl_color(foreground)` + text. Three
+patches make that cheaper:
+
+1. **RGB pen / brush cache** (`src/fl_color_win32.cxx`,
+   `Fl_GDI_Graphics_Driver::color(r,g,b)`). Upstream keeps a *single*
+   `Fl_XMap` for all RGB colours, so every change to a different RGB colour
+   deleted the pen and created a new one, and because the brush cache is keyed
+   by that xmap, the next `fl_rectf()` deleted and created a brush as well:
+   two pens and a brush per colour run. Win98's 16-bit GDI heap makes object
+   creation slow. The patch keeps the last 16 RGB colours (`SOOB_N_RGB`), each
+   with its own pen and brush slot, so a themed editor creates no GDI objects
+   after its first frame.
+2. **Line background once** (`src/Fl_Text_Display.cxx`, `handle_vline()` /
+   `draw_string()`). `handle_vline(DRAW_LINE)` paints the line's plain
+   background in one `fl_rectf()`, and while the file-static `soobLineFilled`
+   is set, `draw_string()` draws unselected runs as text only (no rectangle,
+   one colour change). Selected / highlighted runs still paint their own
+   background.
+3. **Scroll by copying** (`src/Fl_Text_Display.cxx`, `scroll_()` / `draw()`).
+   Upstream repaints every visible line after any scroll, so holding an arrow
+   key past the edge of the view redrew the whole page per step. `scroll_()`
+   now records a pure vertical scroll (accumulated in `soobPendLines`), and
+   `draw()` shifts the image already in the window by whole lines with
+   `BitBlt` and draws only the lines that scrolled in, then the ranges marked
+   by `redisplay_range()` (old / new cursor line, edits). Conditions, else the
+   stock full repaint: Win32, a double-buffered window (its offscreen copy is
+   always complete; a plain window's screen pixels may be covered), no
+   `FL_DAMAGE_ALL`, a jump smaller than the view, and text area / line height
+   / horizontal offset equal to what the previous `draw()` recorded
+   (`soobImg*`). The line-number margin is repainted by the existing gate,
+   since its top line changed.
+
+All three keep their state in file statics, not members, so
+`sizeof(Fl_Text_Display)` and the ABI do not change. Verified on Win10 by
+scrolling and editing at the view's edges (HTML and Markdown) and comparing the
+window pixel for pixel with a forced full repaint: identical apart from the
+blinking caret's phase.
+
+A fourth saving is outside FLTK: `lexMergeBlanks()` in `fltk_ui/edit_lex.h`
+gives spaces and tabs a neighbouring token's style (whitespace has no visible
+colour), which removes 20-30% of the runs in HTML / JS / PHP.
+
+Rebuild after pulling (only these two sources changed): on Win98 delete
+`vendor\fltk-1.3\FL\lib\o\Fl_Text_Display.o`, `lib\o\fl_color.o` and
+`lib\fltkok.tag`, then run `fltk98`; on Win10 run `build_fltk_win10.bat`
+(or replace those two objects in `lib_w10\libfltk.a`).
+
 ## Local FLTK patch: GL device context (defensive)
 
 `vendor/fltk-1.3/FL/src/Fl_Gl_Choice.cxx` carries a one-line fallback. It is *not*
