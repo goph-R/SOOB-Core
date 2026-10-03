@@ -215,7 +215,9 @@ void Fl_Scrollbar::draw() {
         fl_color(labelcolor());
       else
         fl_color(fl_inactive(labelcolor()));
-      int w1 = (H-4)/3; if (w1 < 1) w1 = 1;
+      /* SOOB: /4, not /3. Win98 draws a 7x4 arrow in a 16px bar; /3
+         gives 9x5. See docs/editor-fltk-win98.md. */
+      int w1 = (H-4)/4; if (w1 < 1) w1 = 1;
       int x1 = X+(H-w1-1)/2;
       int yy1 = Y+(H-2*w1-1)/2;
       if (Fl::is_scheme("gtk+")) {
@@ -240,7 +242,8 @@ void Fl_Scrollbar::draw() {
         fl_color(labelcolor());
       else
         fl_color(fl_inactive(labelcolor()));
-      int w1 = (W-4)/3; if (w1 < 1) w1 = 1;
+      /* SOOB: /4, not /3 -- see the horizontal case above. */
+      int w1 = (W-4)/4; if (w1 < 1) w1 = 1;
       int x1 = X+(W-2*w1-1)/2;
       int yy1 = Y+(W-w1-1)/2;
       if (Fl::is_scheme("gtk+")) {

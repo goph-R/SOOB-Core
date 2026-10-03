@@ -489,6 +489,59 @@ Rebuild after pulling (only these two sources changed): on Win98 delete
 `lib\fltkok.tag`, then run `fltk98`; on Win10 run `build_fltk_win10.bat`
 (or replace those two objects in `lib_w10\libfltk.a`).
 
+## Local FLTK patches: Win98-sized arrows (scrollbar, submenu)
+
+**Re-apply if FLTK is ever upgraded.** Both of FLTK's arrow glyphs come out
+bigger than the ones Windows 98 draws:
+
+| arrow | target | stock FLTK |
+| --- | --- | --- |
+| scrollbar, in a 16px bar | 7 wide x 4 tall | 9 x 5 |
+| submenu, 11px menu font | 4 wide x 7 tall | 5 x 9 |
+
+The scrollbar figure is measured: PuTTY's bar on the target is 16px wide with
+a 7x4 arrow, against ours at 16px with 9x5. The submenu figure is not -- no
+screenshot to hand has a native Win98 submenu open. 4x7 is what Marlett gives
+at an 11px menu font, and it is what SOOB-Code itself drew until the rows grew
+to 19px. Worth re-measuring against a real one if it still reads large.
+
+`Fl_Scrollbar.cxx` sizes its triangle `w1 = (W-4)/3` and draws it `2*w1+1`
+wide by `w1+1` tall, so a 16px bar gives 9x5. The patch divides by **4**
+instead, which lands exactly on 7x4 at 16px and scales sanely with
+`Fl::scrollbar_size()`. Both orientations have their own copy of the line.
+
+`Fl_Menu.cxx`'s `drawentry()` sizes the submenu arrow `sz = (hh-7)&-2` off the
+ROW height, and draws it `sz/2+1` by `sz+1`. That is wrong in kind, not just
+in degree: Windows draws this glyph in Marlett at the MENU FONT size, so it
+stays 4x7 whatever the row height, while FLTK's grows whenever the rows do --
+which is exactly what happened when `edit_menupad.h` took the rows to Word's
+19px and the arrow went from 4x7 to 5x9. The patch derives `sz` from the
+item's label size instead:
+
+```c
+int ts = m->labelsize_ ? m->labelsize_ :
+             button ? button->textsize() : FL_NORMAL_SIZE;
+int sz = ((ts+1)/2)&-2;
+if (sz < 4) sz = 4;
+```
+
+11px -> `sz` 6 -> a 4x7 arrow. Nothing else in the entry's layout moves: `y1`
+and `x1` are still derived from `sz`, so the arrow stays centred in the row
+and the same few pixels off the right edge.
+
+Neither patch changes a structure or a signature, so the ABI is untouched --
+but the library does have to be rebuilt. Only two objects are affected:
+
+```
+del vendor\fltk-1.3\FL\lib\o\Fl_Scrollbar.o
+del vendor\fltk-1.3\FL\lib\o\Fl_Menu.o
+del vendor\fltk-1.3\FL\lib\fltkok.tag
+fltk98
+```
+
+then `e98` (SOOB-Code) or `ed98` (SOOB-Engine). For the Win10 library, run
+`build_fltk_win10.bat` -- it has no per-object sentinel to clear.
+
 ## Local FLTK patch: GL device context (defensive)
 
 `vendor/fltk-1.3/FL/src/Fl_Gl_Choice.cxx` carries a one-line fallback. It is *not*

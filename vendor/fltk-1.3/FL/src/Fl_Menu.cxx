@@ -471,7 +471,14 @@ void menuwindow::drawentry(const Fl_Menu_Item* m, int n, int eraseit) {
 
   // the shortcuts and arrows assume fl_color() was left set by draw():
   if (m->submenu()) {
-    int sz = (hh-7)&-2;
+    /* SOOB: size the arrow off the MENU FONT, not off the row. Windows
+       draws it in Marlett at the menu font size -- 4x7 for an 11px font,
+       whatever the row height -- where stock FLTK's (hh-7)&-2 grows it
+       whenever the rows grow. See docs/editor-fltk-win98.md. */
+    int ts = m->labelsize_ ? m->labelsize_ :
+                 button ? button->textsize() : FL_NORMAL_SIZE;
+    int sz = ((ts+1)/2)&-2;
+    if (sz < 4) sz = 4;
     int y1 = yy+(hh-sz)/2;
     int x1 = xx+ww-sz-3;
     fl_polygon(x1+2, y1, x1+2, y1+sz, x1+sz/2+2, y1+sz/2);
