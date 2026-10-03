@@ -51,9 +51,30 @@ anything under `scripts/engine/`.
   Windows `config.h` and `FL/abi-version.h` and break the Win98 build. Put
   model-layer logic in a buffer-only function (as `edit_find.h` /
   `edit_match.h` do) so it can be tested here rather than by hand on Win98.
-- Win98 batch files must not `if exist` a path through `SOOB-Core`:
-  COMMAND.COM's builtins resolve 8.3 names only, and `SOOB-Core` is not one.
-  Passing such paths to the compiler / linker is fine.
+
+## Win98 batch files (COMMAND.COM)
+
+Flow control is **goto-only**: no `setlocal`, no `%~1`, no parenthesised
+`if ( ... )` blocks — COMMAND.COM reopens the file per line and silently
+misparses all three. Beyond that, two rules that have each cost a build:
+
+- **`mkdir` makes one level per call.** `mkdir raw\obj` fails outright when
+  `raw\` does not exist, which is every fresh clone. Create each level:
+
+      if not exist raw\nul     mkdir raw
+      if not exist raw\obj\nul mkdir raw\obj
+
+- **`if exist` on a DIRECTORY needs the `\nul` suffix.** On a bare directory
+  name it misreports, so the guarded command runs anyway.
+
+A FILE through a long path *does* resolve: `if exist
+..\SOOB-Core\vendor\include\AL\al.h` works, verified on the target by
+SOOB-Puzzle's `build.bat`. The older claim here — that COMMAND.COM's builtins
+resolve 8.3 names only, so `SOOB-Core` cannot be tested through — came from a
+test on a *directory* (`..\SOOB-Core\vendor\fltk-1.3\FL\lib`, in
+SOOB-Code's `e98.bat`) written without `\nul`, and the rule above explains
+that failure better. Note `fltk98.bat` has used `if not exist ..\lib\nul`
+all along. Still untested: a directory through a long path *with* `\nul`.
 
 ## Lua naming convention
 
