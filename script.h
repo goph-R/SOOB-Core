@@ -280,97 +280,120 @@ static void scrOptfieldColor(lua_State *L, int idx,
  *
  * Region must be registered (no raw-path fallback). Must be called from
  * inside uiBegin/uiEnd (i.e., onRender). */
-static int scrDrawRegion(lua_State *L)
+/* ---- shared drawing core -------------------------------------------------
+ * drawRegion and drawTexRect differ only in where the SOURCE rectangle comes
+ * from -- a registered Region, or the caller's own pixels. Everything after
+ * that (the options, fill clipping, alignment, scale, rotation, tint and the
+ * UV maths) is identical, so it lives here once rather than in two copies
+ * that would drift apart.
+ */
+typedef struct ScrDrawOpts {
+    int   align, flip;
+    float fillX, fillY;
+    float scaleX, scaleY;
+    float rot;                       /* radians, about the dest-rect centre */
+    float r, g, b, a;
+    int   hasSrc;                    /* bits: 1=srcX 2=srcY 4=srcW 8=srcH */
+    int   srcX, srcY, srcW, srcH;
+    int   hasDstW, hasDstH;
+    float dstW, dstH;
+} ScrDrawOpts;
+
+/* Read the options of a draw call whose first three arguments are
+   (name, x, y): a table at argument 4, or the positional
+   align / flip / fillX / fillY form that shipped first. */
+static void scrReadDrawOpts(lua_State *L, ScrDrawOpts *o)
 {
-    lua_getfield(L, LUA_REGISTRYINDEX, "engine.sys");
-    ScriptSystem *s = (ScriptSystem *)lua_touserdata(L, -1);
-    lua_pop(L, 1);
-
-    const char *name = luaL_checkstring(L, 1);
-    float x     = (float)luaL_checknumber(L, 2);
-    float y     = (float)luaL_checknumber(L, 3);
-
-    /* Defaults */
-    int   align = 0;
-    int   flip  = 0;
-    float fx    = 1.0f, fy = 1.0f;
-    float sx_   = 1.0f, sy_ = 1.0f;
-    float rot_  = 0.0f;   /* radians, about the dest-rect center */
-    float cr_ = 1.0f, cg_ = 1.0f, cb_ = 1.0f, ca_ = 1.0f;
+    o->align = 0;
+    o->flip  = 0;
+    o->fillX = 1.0f; o->fillY = 1.0f;
+    o->scaleX = 1.0f; o->scaleY = 1.0f;
+    o->rot = 0.0f;
+    o->r = 1.0f; o->g = 1.0f; o->b = 1.0f; o->a = 1.0f;
+    o->hasSrc = 0;
+    o->srcX = 0; o->srcY = 0; o->srcW = 0; o->srcH = 0;
+    o->hasDstW = 0; o->hasDstH = 0;
+    o->dstW = 0.0f; o->dstH = 0.0f;
 
     /* Optional source sub-rect (for atlas frames / 9-patch slices) and
-       explicit destination size. has_src bits: 1=srcX, 2=srcY, 4=srcW,
+       explicit destination size. o->hasSrc bits: 1=srcX, 2=srcY, 4=srcW,
        8=srcH — any subset can override the region's natural box. */
-    int   has_src = 0;
-    int   src_x_ovr = 0, src_y_ovr = 0, src_w_ovr = 0, src_h_ovr = 0;
-    int   has_dst_w = 0, has_dst_h = 0;
-    float dst_w_ovr = 0.0f, dst_h_ovr = 0.0f;
 
     if (lua_istable(L, 4)) {
         /* Options-table form */
-        align = scrOptfieldInt(L, 4, "align", 0);
-        flip  = scrOptfieldInt(L, 4, "flip",  0);
-        fx    = scrOptfieldNum(L, 4, "fillX", 1.0f);
-        fy    = scrOptfieldNum(L, 4, "fillY", 1.0f);
+        o->align = scrOptfieldInt(L, 4, "align", 0);
+        o->flip  = scrOptfieldInt(L, 4, "flip",  0);
+        o->fillX = scrOptfieldNum(L, 4, "fillX", 1.0f);
+        o->fillY = scrOptfieldNum(L, 4, "fillY", 1.0f);
         float uniform = scrOptfieldNum(L, 4, "scale", 1.0f);
-        sx_   = scrOptfieldNum(L, 4, "scaleX", uniform);
-        sy_   = scrOptfieldNum(L, 4, "scaleY", uniform);
-        rot_  = scrOptfieldNum(L, 4, "rotation", 0.0f);
-        scrOptfieldColor(L, 4, &cr_, &cg_, &cb_, &ca_);
+        o->scaleX = scrOptfieldNum(L, 4, "scaleX", uniform);
+        o->scaleY = scrOptfieldNum(L, 4, "scaleY", uniform);
+        o->rot    = scrOptfieldNum(L, 4, "rotation", 0.0f);
+        scrOptfieldColor(L, 4, &o->r, &o->g, &o->b, &o->a);
 
         lua_getfield(L, 4, "srcX");
-        if (!lua_isnil(L, -1)) { src_x_ovr = (int)lua_tointeger(L, -1); has_src |= 1; }
+        if (!lua_isnil(L, -1)) { o->srcX = (int)lua_tointeger(L, -1); o->hasSrc |= 1; }
         lua_pop(L, 1);
         lua_getfield(L, 4, "srcY");
-        if (!lua_isnil(L, -1)) { src_y_ovr = (int)lua_tointeger(L, -1); has_src |= 2; }
+        if (!lua_isnil(L, -1)) { o->srcY = (int)lua_tointeger(L, -1); o->hasSrc |= 2; }
         lua_pop(L, 1);
         lua_getfield(L, 4, "srcW");
-        if (!lua_isnil(L, -1)) { src_w_ovr = (int)lua_tointeger(L, -1); has_src |= 4; }
+        if (!lua_isnil(L, -1)) { o->srcW = (int)lua_tointeger(L, -1); o->hasSrc |= 4; }
         lua_pop(L, 1);
         lua_getfield(L, 4, "srcH");
-        if (!lua_isnil(L, -1)) { src_h_ovr = (int)lua_tointeger(L, -1); has_src |= 8; }
+        if (!lua_isnil(L, -1)) { o->srcH = (int)lua_tointeger(L, -1); o->hasSrc |= 8; }
         lua_pop(L, 1);
 
         lua_getfield(L, 4, "dstW");
-        if (!lua_isnil(L, -1)) { dst_w_ovr = (float)lua_tonumber(L, -1); has_dst_w = 1; }
+        if (!lua_isnil(L, -1)) { o->dstW = (float)lua_tonumber(L, -1); o->hasDstW = 1; }
         lua_pop(L, 1);
         lua_getfield(L, 4, "dstH");
-        if (!lua_isnil(L, -1)) { dst_h_ovr = (float)lua_tonumber(L, -1); has_dst_h = 1; }
+        if (!lua_isnil(L, -1)) { o->dstH = (float)lua_tonumber(L, -1); o->hasDstH = 1; }
         lua_pop(L, 1);
     } else {
         /* Positional form (backward-compat with shipped API). */
-        align = (int)luaL_optinteger(L, 4, 0);
-        flip  = (int)luaL_optinteger(L, 5, 0);
-        fx    = (float)luaL_optnumber(L, 6, 1.0);
-        fy    = (float)luaL_optnumber(L, 7, 1.0);
+        o->align = (int)luaL_optinteger(L, 4, 0);
+        o->flip  = (int)luaL_optinteger(L, 5, 0);
+        o->fillX = (float)luaL_optnumber(L, 6, 1.0);
+        o->fillY = (float)luaL_optnumber(L, 7, 1.0);
     }
+}
 
-    const Region *rg = assetRegFindRegion(s->assets, name);
-    if (!rg) {
-        conLogf("drawRegion: unknown region '%s'\n", name);
-        return 0;
-    }
-
-    const char *texPath = assetRegResolveTexture(s->assets, rg->texName);
+/* Draw [bsx,bsy,bsw,bsh] of the texture `texToken` (a name from the textures
+   table, or a path -- assetRegResolveTexture falls through) at (x, y).
+   A base width or height of zero means the whole texture. */
+static int scrDrawTexSub(ScriptSystem *s, const char *texToken,
+                         int bsx, int bsy, int bsw, int bsh,
+                         float x, float y, const ScrDrawOpts *o)
+{
+    const char *texPath = assetRegResolveTexture(s->assets, texToken);
     int tw = 0, th = 0;
     GLuint tex = texCacheGetA(s->texCache, texPath, GL_CLAMP_TO_EDGE, 1, &tw, &th);
     if (!tex || tw <= 0 || th <= 0) return 0;
 
+    /* A base of zero size means "the whole texture", which is what
+       drawTexRect passes: its srcX / srcY are then plain texture pixels. */
+    if (bsw <= 0 || bsh <= 0) { bsx = 0; bsy = 0; bsw = tw; bsh = th; }
+
+    float fx = o->fillX, fy = o->fillY;
     if (fx < 0.0f) fx = 0.0f; if (fx > 1.0f) fx = 1.0f;
     if (fy < 0.0f) fy = 0.0f; if (fy > 1.0f) fy = 1.0f;
+    int   align = o->align, flip = o->flip;
+    float sx_ = o->scaleX, sy_ = o->scaleY, rot_ = o->rot;
+    float cr_ = o->r, cg_ = o->g, cb_ = o->b, ca_ = o->a;
 
-    /* Effective source rect — defaults to the registered region, overridden
-       by explicit src_* options. srcX / srcY are RELATIVE to the region
-       origin, so a caller asking for "(8, 0)" gets the same pixel regardless
-       of where the region sits in the texture. */
-    int eff_sx = rg->sx;
-    int eff_sy = rg->sy;
-    int eff_sw = rg->sw;
-    int eff_sh = rg->sh;
-    if (has_src & 1) eff_sx = rg->sx + src_x_ovr;
-    if (has_src & 2) eff_sy = rg->sy + src_y_ovr;
-    if (has_src & 4) eff_sw = src_w_ovr;
-    if (has_src & 8) eff_sh = src_h_ovr;
+    /* Effective source rect — the base, overridden by any explicit src_*
+       option. srcX / srcY are RELATIVE to the base origin: for a region that
+       means the same pixel wherever the region sits in the sheet, and for
+       drawTexRect the base is (0,0) so they are plain texture pixels. */
+    int eff_sx = bsx;
+    int eff_sy = bsy;
+    int eff_sw = bsw;
+    int eff_sh = bsh;
+    if (o->hasSrc & 1) eff_sx = bsx + o->srcX;
+    if (o->hasSrc & 2) eff_sy = bsy + o->srcY;
+    if (o->hasSrc & 4) eff_sw = o->srcW;
+    if (o->hasSrc & 8) eff_sh = o->srcH;
 
     /* Resolve align (0 in either axis falls back to TOP / LEFT). */
     int alignH = align & 7;
@@ -409,8 +432,8 @@ static int scrDrawRegion(lua_State *L)
 
     /* Destination rect — visible source size × scale, or an explicit
        dstW/dstH override. Anchored at (x, y) according to align. */
-    float dst_w = has_dst_w ? dst_w_ovr : vis_sw * sx_;
-    float dst_h = has_dst_h ? dst_h_ovr : vis_sh * sy_;
+    float dst_w = o->hasDstW ? o->dstW : vis_sw * sx_;
+    float dst_h = o->hasDstH ? o->dstH : vis_sh * sy_;
     float dst_x;
     if (alignH == 1)      dst_x = x;
     else if (alignH == 4) dst_x = x - dst_w;
@@ -437,6 +460,69 @@ static int scrDrawRegion(lua_State *L)
         uiIconUVColor(dr, tex, u0, v0, u1, v1, cr_, cg_, cb_, ca_);
     }
     return 0;
+}
+
+static int scrDrawRegion(lua_State *L)
+{
+    lua_getfield(L, LUA_REGISTRYINDEX, "engine.sys");
+    ScriptSystem *s = (ScriptSystem *)lua_touserdata(L, -1);
+    lua_pop(L, 1);
+
+    const char *name = luaL_checkstring(L, 1);
+    float x     = (float)luaL_checknumber(L, 2);
+    float y     = (float)luaL_checknumber(L, 3);
+    ScrDrawOpts o;
+    scrReadDrawOpts(L, &o);
+
+    const Region *rg = assetRegFindRegion(s->assets, name);
+    if (!rg) {
+        conLogf("drawRegion: unknown region '%s'\n", name);
+        return 0;
+    }
+    /* srcX / srcY stay RELATIVE to the region origin, so a caller asking for
+       "(8, 0)" gets the same pixel wherever the region sits in the sheet. */
+    return scrDrawTexSub(s, rg->texName, rg->sx, rg->sy, rg->sw, rg->sh, x, y, &o);
+}
+
+/* drawTexRect(tex, x, y [, opts]) -- the same drawing, with the source
+   rectangle given per call instead of registered in assets.lua. For anything
+   whose sub-rects are only known at runtime: sprite frames computed from an
+   index, or a puzzle that cuts one image into an N x N grid chosen by the
+   player. srcX / srcY are plain texture pixels here, since the base is the
+   whole image. Nothing is registered, so the slices have no names -- use
+   drawRegion when you want one. */
+static int scrDrawTexRect(lua_State *L)
+{
+    lua_getfield(L, LUA_REGISTRYINDEX, "engine.sys");
+    ScriptSystem *s = (ScriptSystem *)lua_touserdata(L, -1);
+    lua_pop(L, 1);
+
+    const char *tex = luaL_checkstring(L, 1);
+    float x     = (float)luaL_checknumber(L, 2);
+    float y     = (float)luaL_checknumber(L, 3);
+    ScrDrawOpts o;
+    scrReadDrawOpts(L, &o);
+
+    return scrDrawTexSub(s, tex, 0, 0, 0, 0, x, y, &o);
+}
+
+/* textureSize(tex) -> w, h in pixels, so a script can work out its own grid.
+   Loads the texture if it is not cached yet, which drawing it would do
+   anyway. Nothing on failure, so `if not w then` is the check. */
+static int scrTextureSize(lua_State *L)
+{
+    lua_getfield(L, LUA_REGISTRYINDEX, "engine.sys");
+    ScriptSystem *s = (ScriptSystem *)lua_touserdata(L, -1);
+    lua_pop(L, 1);
+
+    const char *tex = luaL_checkstring(L, 1);
+    const char *path = assetRegResolveTexture(s->assets, tex);
+    int tw = 0, th = 0;
+    if (!texCacheGetA(s->texCache, path, GL_CLAMP_TO_EDGE, 1, &tw, &th)) return 0;
+    if (tw <= 0 || th <= 0) return 0;
+    lua_pushinteger(L, tw);
+    lua_pushinteger(L, th);
+    return 2;
 }
 
 /* drawText(text, x, y)
@@ -1246,6 +1332,8 @@ static int scriptInit(ScriptSystem *s, UiState *ui, SoundSystem *snd,
     lua_register(s->L, "viewSize",       scrViewSize);
     lua_register(s->L, "regionSlice",    scrRegionSlice);
     lua_register(s->L, "regionSize",     scrRegionSize);
+    lua_register(s->L, "drawTexRect",    scrDrawTexRect);
+    lua_register(s->L, "textureSize",    scrTextureSize);
     lua_register(s->L, "optSet",         scrOptSet);
     lua_register(s->L, "optGet",         scrOptGet);
     lua_register(s->L, "optSave",        scrOptSave);

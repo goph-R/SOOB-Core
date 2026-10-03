@@ -63,9 +63,42 @@ drawRegion(name, x, y, {                 -- options-table form
 })
 ```
 
+### Sub-rects that only exist at runtime
+
+`drawRegion` needs a name from `assets.lua`, which is the wrong shape when
+the rectangles are computed — sprite frames from an index, or one image cut
+into a grid whose size the player chooses. `drawTexRect` takes the source
+rect per call instead, and `textureSize` tells you how big the image is:
+
+```lua
+local tw, th = textureSize("puzzle_pic")      -- or "assets/pic.png"
+local n  = 4                                   -- 4 x 4 board
+local cw, ch = tw / n, th / n                  -- one tile, in source pixels
+
+-- draw tile (col,row) of the picture at (x,y), scaled to `size` on screen
+local function drawTile(col, row, x, y, size)
+    drawTexRect("puzzle_pic", x, y, {
+        srcX = col * cw, srcY = row * ch,
+        srcW = cw,       srcH = ch,
+        dstW = size,     dstH = size,
+    })
+end
+```
+
+Nothing is registered, so these slices have no names: `regionSize`,
+`regionSlice`, `drawBg` and the widget code all address regions by name and
+will not see them. Use a named region when you want those; use
+`drawTexRect` when the rectangle is a calculation.
+
+The source rect is **not** clipped to the texture and the texture is bound
+`GL_CLAMP_TO_EDGE`, so an off-by-one in `srcW` smears the edge pixel rather
+than raising an error — worth knowing when the numbers come from arithmetic
+rather than a table.
+
 | Binding | Returns | Notes |
 |---|---|---|
 | `drawRegion(name, x, y [, …])` | — | Draw a registered region (atlas sub-rect). Region must exist — no raw-path fallback. 1 source px = 1 vpx unless scaled. |
+| `drawTexRect(tex, x, y [, …])` | — | The same drawing, but the source rect is given per call instead of registered. `tex` is a name from the `textures` table **or a plain path**. Takes every option `drawRegion` does; here `srcX` / `srcY` are plain texture pixels, since the base is the whole image. |
 | `drawText(text, x, y [, scale [, font]])` | — | Positional form. `scale` multiplies the font's native line height. |
 | `drawText(text, x, y, {scale, font, align, color, alpha})` | — | Options form. `font` is a name from the `fonts` table; falls back to the built-in 8×8 font if unloaded/unknown. |
 | `drawEllipse(cx, cy, rx, ry [, {start, finish, segments, thickness, color, alpha}])` | — | Procedural arc/ellipse. `start`/`finish` in `[0,1]` (tween `finish` for the "drawing" animation). `segments` default 64, `thickness` default 2 (driver may clamp). |
@@ -83,6 +116,7 @@ vertical `ALIGN_TOP(8) | ALIGN_MIDDLE(16) | ALIGN_BOTTOM(32)`; `0` = TOP+LEFT.
 | `textWidth(text [, scale [, font]])` | `w` | Rendered width in vpx (same font/scale convention as `drawText`). For cursor positioning, sizing backgrounds. |
 | `viewSize()` | `w, h` | Current virtual-canvas size. `h` is always 480; `w` scales with aspect. Anchor against real visible edges. |
 | `regionSize(name)` | `w, h` | A region's source pixel size (from `assets.lua`). Nothing if unregistered. |
+| `textureSize(tex)` | `w, h` | A texture's pixel size, for working out your own grid. Loads it if not cached. Nothing if it cannot be loaded. |
 | `regionSlice(name)` | `x1, x2, y1, y2, w, h` | 9-patch cut lines (region-local px) plus source size. Nothing if the region has no slice. Drives `draw9patch` from one source of truth. |
 
 ## Options / persistence
