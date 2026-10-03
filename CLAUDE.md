@@ -64,17 +64,26 @@ misparses all three. Beyond that, two rules that have each cost a build:
       if not exist raw\nul     mkdir raw
       if not exist raw\obj\nul mkdir raw\obj
 
-- **`if exist` on a DIRECTORY needs the `\nul` suffix.** On a bare directory
-  name it misreports, so the guarded command runs anyway.
+- **Do not test for a DIRECTORY at all.** `if exist dir` on a bare directory
+  name misreports, and the usual `if exist dir\nul` fix is a *local DOS*
+  quirk: DOS synthesises a `NUL` entry inside a real directory, but a network
+  redirector need not — and this tree is normally built from a share (`X:`).
+  Over SMB the `\nul` form misfires and prints `File not found - raw\obj`.
+  Just make the directory and discard the complaint:
+
+      md raw      >nul
+      md raw\obj  >nul
 
 A FILE through a long path *does* resolve: `if exist
 ..\SOOB-Core\vendor\include\AL\al.h` works, verified on the target by
-SOOB-Puzzle's `build.bat`. The older claim here — that COMMAND.COM's builtins
-resolve 8.3 names only, so `SOOB-Core` cannot be tested through — came from a
-test on a *directory* (`..\SOOB-Core\vendor\fltk-1.3\FL\lib`, in
-SOOB-Code's `e98.bat`) written without `\nul`, and the rule above explains
-that failure better. Note `fltk98.bat` has used `if not exist ..\lib\nul`
-all along. Still untested: a directory through a long path *with* `\nul`.
+SOOB-Puzzle's `build.bat`. So the older claim — that COMMAND.COM's builtins
+resolve 8.3 names only, hence `SOOB-Core` cannot be tested through — looks
+like a misdiagnosis: it came from a test on a *directory*
+(`..\SOOB-Core\vendor\fltk-1.3\FL\lib`, in SOOB-Code's `e98.bat`), which
+the directory rule above explains without involving filename length at all.
+`fltk98.bat` gets away with `if not exist ..\lib\nul` because it runs with
+the current directory already inside the tree, on a path short enough to be
+8.3 — not because `\nul` is reliable here.
 
 ## Lua naming convention
 
