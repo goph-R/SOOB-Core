@@ -15,16 +15,27 @@
  * WHAT IS LANGUAGE-SPECIFIC
  *
  * Brackets ( [ { work in every language. Block WORDS live in one table
- * (codeBlockWordTable) and are split three ways, because Lua needs all three:
+ * (codeBlockWordTable), split four ways:
  *
- *   open    function then do repeat   the next line is indented
- *   close   end until                 this line is outdented to its opener
- *   mid     else elseif               BOTH -- outdented to the enclosing
- *                                     `if`, but the line after is indented
+ *   open    begin case record        depth +1, and the next line is indented
+ *   close   end until                depth -1, and THIS line is outdented to
+ *                                    its opener
+ *   mid     except finally           depth 0, but both of the above: outdented
+ *                                    to the opener, next line indented
+ *   hint    then do of var           depth 0, next line indented, never a
+ *                                    re-indent trigger
  *
- * Only open/close move the nesting depth; mid words are depth-neutral, which
- * is what makes a scan back from `end` walk past an `else` and land on the
- * `if`. Adding Pascal's begin / end is one row in the table.
+ * Only open/close move the nesting depth, which is what makes a scan back
+ * from `end` walk past an `except` and land on the `try`.
+ *
+ * `hint` exists for Pascal and is the whole reason the fourth category is
+ * needed. `then` and `do` govern ONE statement there and are closed by
+ * nothing, so counting them as openers would make a later `end` align to the
+ * nearest dangling `then` instead of its `begin`. Lua's `then` / `do` ARE
+ * closed by `end`, so they stay openers and Lua's hint list is empty.
+ *
+ * `fold` matches the words case-insensitively (Pascal: BEGIN == begin), in
+ * which case every table entry must be lowercase.
  *
  * Scans back from the caret are capped at CODE_INDENT_LIMIT bytes, the same
  * guard edit_match.h uses: one unbalanced keyword in a large file must not
@@ -96,6 +107,8 @@ typedef struct CodeBlockWords {
     const char *const *open;   int nOpen;
     const char *const *close;  int nClose;
     const char *const *mid;    int nMid;
+    const char *const *hint;   int nHint;
+    char fold;                 /* case-insensitive; entries must be lowercase */
 } CodeBlockWords;
 
 /* `function` and `do` and `then` and `repeat` open; `end` and `until` close.
@@ -104,13 +117,37 @@ static const char *const codeLuaOpenWords[]  = { "function", "then", "do", "repe
 static const char *const codeLuaCloseWords[] = { "end", "until" };
 static const char *const codeLuaMidWords[]   = { "else", "elseif" };
 
+/* Pascal. Only genuinely paired words are openers: begin/case/record/try end
+ * with `end`, repeat with `until`. `class` and `object` are left out on
+ * purpose -- a forward declaration `TFoo = class;` has no `end`, so counting
+ * it would strand the next `end`.
+ *
+ * `else` is a hint, NOT a mid word, which is the one place Pascal differs
+ * from Lua. Aligning `else` with its `if` would need `if` tracked as an
+ * opener, and `if` is closed by nothing. Leaving it out is better than
+ * guessing: after an `end` that has just been aligned to its `begin`, plain
+ * auto-indent already puts `else` on the right column, which is the common
+ * begin/end form. */
+static const char *const codePasOpenWords[]  = { "begin", "case", "record",
+                                                 "repeat", "try" };
+static const char *const codePasCloseWords[] = { "end", "until" };
+static const char *const codePasMidWords[]   = { "except", "finally" };
+static const char *const codePasHintWords[]  = { "const", "do", "else", "of",
+                                                 "then", "type", "var" };
+
 #define CODE_NELEM(a) ((int)(sizeof(a) / sizeof((a)[0])))
 
 static const CodeBlockWords codeBlockWordTable[] = {
     { LEX_LANG_LUA,
       codeLuaOpenWords,  CODE_NELEM(codeLuaOpenWords),
       codeLuaCloseWords, CODE_NELEM(codeLuaCloseWords),
-      codeLuaMidWords,   CODE_NELEM(codeLuaMidWords) }
+      codeLuaMidWords,   CODE_NELEM(codeLuaMidWords),
+      0, 0, 0 },
+    { LEX_LANG_PASCAL,
+      codePasOpenWords,  CODE_NELEM(codePasOpenWords),
+      codePasCloseWords, CODE_NELEM(codePasCloseWords),
+      codePasMidWords,   CODE_NELEM(codePasMidWords),
+      codePasHintWords,  CODE_NELEM(codePasHintWords), 1 }
 };
 
 /* The block-word rules for `lang`, or 0 for a language that has none (every
@@ -124,21 +161,23 @@ static const CodeBlockWords *codeBlockWords(int lang)
 }
 
 /* Does the buffer range [s,e) spell exactly `w`? */
-static int codeIndWordIs(Fl_Text_Buffer *b, int s, int e, const char *w)
+static int codeIndWordIs(Fl_Text_Buffer *b, int s, int e, const char *w, int fold)
 {
     int i = 0;
     while (s + i < e) {
-        if (!w[i] || b->byte_at(s + i) != w[i]) return 0;
+        int c = (unsigned char)b->byte_at(s + i);
+        if (fold) c = lexLower(c);
+        if (!w[i] || c != (unsigned char)w[i]) return 0;
         i++;
     }
     return w[i] == '\0';
 }
 
 static int codeIndWordIn(Fl_Text_Buffer *b, int s, int e,
-                         const char *const *list, int n)
+                         const char *const *list, int n, int fold)
 {
     int i;
-    for (i = 0; i < n; i++) if (codeIndWordIs(b, s, e, list[i])) return 1;
+    for (i = 0; i < n; i++) if (codeIndWordIs(b, s, e, list[i], fold)) return 1;
     return 0;
 }
 
@@ -159,8 +198,8 @@ static int codeBlockWordBalance(Fl_Text_Buffer *b, Fl_Text_Buffer *sty,
         s = p;
         while (p < to && codeIndWordCh(codeIndCh(b, p))) p++;
         if (codeIndQuiet(sty, s)) continue;
-        if      (codeIndWordIn(b, s, p, w->close, w->nClose)) bal--;
-        else if (codeIndWordIn(b, s, p, w->open,  w->nOpen))  bal++;
+        if      (codeIndWordIn(b, s, p, w->close, w->nClose, w->fold)) bal--;
+        else if (codeIndWordIn(b, s, p, w->open,  w->nOpen,  w->fold)) bal++;
     }
     return bal;
 }
@@ -199,12 +238,17 @@ static int codeOpensBlock(Fl_Text_Buffer *b, Fl_Text_Buffer *sty,
     }
     if (codeBlockWordBalance(b, sty, lang, ls, p) > 0) return 1;
 
-    /* trailing mid word, e.g. a line that is just `else` */
+    /* A trailing mid or hint word: `else` on its own line in Lua, or Pascal's
+     * `if x then` / `for i := 1 to n do` / a bare `var`. Both indent what
+     * follows; only the last word on the line counts, which is what keeps
+     * `procedure Foo(var x: Integer);` from indenting. */
     w = codeBlockWords(lang);
     if (w && p > ls && codeIndWordCh(codeIndCh(b, p - 1))) {
         s = p;
         while (s > ls && codeIndWordCh(codeIndCh(b, s - 1))) s--;
-        if (!codeIndQuiet(sty, s) && codeIndWordIn(b, s, p, w->mid, w->nMid))
+        if (!codeIndQuiet(sty, s) &&
+            (codeIndWordIn(b, s, p, w->mid,  w->nMid,  w->fold) ||
+             codeIndWordIn(b, s, p, w->hint, w->nHint, w->fold)))
             return 1;
     }
     return 0;
@@ -283,6 +327,7 @@ static int codeCloseWordOpener(Fl_Text_Buffer *b, Fl_Text_Buffer *sty,
         for (p = 0; p < n; p++) cand[p] = codeIndCh(b, ws + p);
         if (typed) cand[n++] = typed;
         cand[n] = '\0';
+        if (w->fold) for (p = 0; cand[p]; p++) cand[p] = (char)lexLower((unsigned char)cand[p]);
         hit = 0;
         for (p = 0; p < w->nClose && !hit; p++) if (!strcmp(cand, w->close[p])) hit = 1;
         for (p = 0; p < w->nMid   && !hit; p++) if (!strcmp(cand, w->mid[p]))   hit = 1;
@@ -297,8 +342,8 @@ static int codeCloseWordOpener(Fl_Text_Buffer *b, Fl_Text_Buffer *sty,
         s = e;
         while (s > 0 && codeIndWordCh(codeIndCh(b, s - 1))) s--;
         if (!codeIndQuiet(sty, s)) {
-            if (codeIndWordIn(b, s, e, w->close, w->nClose)) depth++;
-            else if (codeIndWordIn(b, s, e, w->open, w->nOpen)) {
+            if (codeIndWordIn(b, s, e, w->close, w->nClose, w->fold)) depth++;
+            else if (codeIndWordIn(b, s, e, w->open, w->nOpen, w->fold)) {
                 if (depth == 0) return b->line_start(s);
                 depth--;
             }

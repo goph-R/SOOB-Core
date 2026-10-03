@@ -25,9 +25,70 @@
 #include <stdlib.h>
 #include <string.h>
 #include <FL/fl_utf8.h>
+#include <FL/Fl_Text_Buffer.H>
 #ifdef _WIN32
 #include <windows.h>
 #endif
+
+/* How many bytes of a line to keep when trimming trailing whitespace.
+ *
+ * `keepMdBreak` is for Markdown, where two trailing SPACES are a hard line
+ * break rather than stray whitespace -- so a line with content whose trailing
+ * run is spaces only, and at least two of them, keeps exactly two. A run that
+ * contains a tab is not a line break in any Markdown implementation and is
+ * trimmed away. A line that is nothing but whitespace keeps none of it: there
+ * is no content for a break to attach to.
+ *
+ * Pure, so it is unit-tested in edit_code_model_test.cpp rather than by
+ * saving files on the target. */
+static int codeTrimKeep(const char *s, int n, int keepMdBreak)
+{
+    int e = n, i, sp = 0;
+    while (e > 0 && (s[e - 1] == ' ' || s[e - 1] == '\t')) e--;
+    if (e == 0 || e == n) return e;           /* all blank, or nothing to trim */
+    if (!keepMdBreak) return e;
+    for (i = n; i > 0 && s[i - 1] == ' '; i--) sp++;
+    return (sp >= 2 && i == e) ? e + 2 : e;
+}
+
+/* Strip trailing blanks from every line of `b`; returns the bytes removed.
+ *
+ * Walks from the LAST line backwards, so a removal can never shift a position
+ * still to be visited -- which is what keeps this O(lines) and correct without
+ * a second pass. *caret is a buffer position carried along with the text:
+ * past a trimmed run it shifts back by what went, inside one it lands on the
+ * new end of the line, and before one it does not move.
+ *
+ * Buffer-only, so the walk and that caret arithmetic are unit-tested in
+ * edit_code_model_test.cpp; CodeEditor::trimTrailingBlanks() just wraps this
+ * in an undo group. */
+static int codeTrimBuffer(Fl_Text_Buffer *b, int keepMdBreak, int *caret)
+{
+    int removed = 0, ls, le, keep, pos = caret ? *caret : 0;
+    if (!b) return 0;
+    ls = b->line_start(b->length());
+    for (;;) {
+        le = b->line_end(ls);
+        if (le > ls) {
+            char *line = b->text_range(ls, le);
+            if (line) {
+                keep = codeTrimKeep(line, le - ls, keepMdBreak);
+                free(line);
+                if (keep < le - ls) {
+                    int cut = le - (ls + keep);
+                    if (pos >= le)            pos -= cut;
+                    else if (pos > ls + keep) pos = ls + keep;
+                    b->remove(ls + keep, le);
+                    removed += cut;
+                }
+            }
+        }
+        if (ls == 0) break;
+        ls = b->line_start(ls - 1);
+    }
+    if (caret) { if (pos > b->length()) pos = b->length(); *caret = pos; }
+    return removed;
+}
 
 enum {
     CODE_ENC_UTF8 = 0,

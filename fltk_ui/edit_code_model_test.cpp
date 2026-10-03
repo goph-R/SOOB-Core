@@ -122,6 +122,16 @@ static void modSpy(int pos, int nInserted, int nDeleted, int nRestyled,
     gMod.hadText = deletedText != 0;
 }
 
+/* Buffer text equality, printing both sides on a mismatch. */
+static int textIs(Fl_Text_Buffer *b, const char *want)
+{
+    char *t = b->text();
+    int ok = t && strcmp(t, want) == 0;
+    if (!ok) printf("   got \"%s\"\n  want \"%s\"\n", t ? t : "(null)", want);
+    free(t);
+    return ok;
+}
+
 int main(void)
 {
     T = new Fl_Text_Buffer();
@@ -743,6 +753,91 @@ int main(void)
         reset(LEX_LANG_C, "if (x) {\n    en");
         CHECK(codeCloseWordOpener(T, S, LEX_LANG_C, T->length(), 'd') == -1);
 
+        /* ---- Pascal: begin / end, and the dangling-`then` trap ---- */
+        #define OPENS(needle) \
+            codeOpensBlock(T, S, LANG, T->line_end(posOf(needle)))
+        reset(LEX_LANG_PASCAL,
+              "begin\n"
+              "case x of\n"
+              "record\n"
+              "repeat\n"
+              "try\n"
+              "if x then\n"
+              "for i := 1 to 10 do\n"
+              "var\n"
+              "else\n"
+              "BEGIN\n"
+              "End;\n"
+              "i := 1;\n"
+              "procedure Foo(var x: Integer);\n"
+              "{ trailing begin }\n");
+        CHECK(OPENS("begin\n")    == 1);
+        CHECK(OPENS("case x of")  == 1);
+        CHECK(OPENS("record")     == 1);
+        CHECK(OPENS("repeat")     == 1);
+        CHECK(OPENS("try")        == 1);
+        CHECK(OPENS("if x then")  == 1);   /* `then` is a hint */
+        CHECK(OPENS("for i")      == 1);   /* ... do */
+        CHECK(OPENS("var\n")      == 1);   /* a section header */
+        CHECK(OPENS("else")       == 1);
+        CHECK(OPENS("BEGIN")      == 1);   /* case-insensitive */
+        CHECK(OPENS("i := 1;")    == 0);
+        /* only the LAST word counts, so a `var` parameter must not indent */
+        CHECK(OPENS("procedure Foo") == 0);
+        /* `{ ... }` is a Pascal COMMENT, so a `begin` inside it is inert */
+        CHECK(OPENS("{ trailing begin }") == 0);
+        #undef OPENS
+
+        /* `end` aligns with its `begin`, whatever the case */
+        reset(LEX_LANG_PASCAL, "begin\n  i := 1;\n  en");
+        CHECK(codeCloseWordOpener(T, S, LANG, T->length(), 'd') == 0);
+        reset(LEX_LANG_PASCAL, "BEGIN\n  i := 1;\n  En");
+        CHECK(codeCloseWordOpener(T, S, LANG, T->length(), 'D') == 0);
+        /* nested: the inner `end` takes the inner `begin` ... */
+        reset(LEX_LANG_PASCAL,
+              "begin\n"            /* 0 */
+              "  if x then\n"
+              "  begin\n"          /* this one */
+              "    i := 1;\n"
+              "    en");
+        CHECK(codeCloseWordOpener(T, S, LANG, T->length(), 'd') == posOf("  begin"));
+        /* ... and the outer one steps over the whole inner block */
+        reset(LEX_LANG_PASCAL,
+              "begin\n"
+              "  if x then\n"
+              "  begin\n"
+              "    i := 1;\n"
+              "  end;\n"
+              "en");
+        CHECK(codeCloseWordOpener(T, S, LANG, T->length(), 'd') == 0);
+        /* THE REASON `then` is a hint and not an opener: a dangling `then`
+         * must not capture the `end` that belongs to the `begin`. */
+        reset(LEX_LANG_PASCAL,
+              "begin\n"
+              "  if x then\n"
+              "    i := 1;\n"
+              "  en");
+        CHECK(codeCloseWordOpener(T, S, LANG, T->length(), 'd') == 0);  /* the begin */
+        /* repeat / until */
+        reset(LEX_LANG_PASCAL, "repeat\n  i := i + 1;\n  unti");
+        CHECK(codeCloseWordOpener(T, S, LANG, T->length(), 'l') == 0);
+        /* try / except are a pair, so `except` DOES line up with `try` */
+        reset(LEX_LANG_PASCAL, "try\n  Run;\n  excep");
+        CHECK(codeCloseWordOpener(T, S, LANG, T->length(), 't') == 0);
+        reset(LEX_LANG_PASCAL, "try\n  Run;\n  finall");
+        CHECK(codeCloseWordOpener(T, S, LANG, T->length(), 'y') == 0);
+        /* `else` is deliberately NOT a trigger in Pascal -- see edit_indent.h */
+        reset(LEX_LANG_PASCAL, "begin\n  if x then\n    i := 1\n  els");
+        CHECK(codeCloseWordOpener(T, S, LANG, T->length(), 'e') == -1);
+        /* `append` is not `end`, and a commented opener is inert */
+        reset(LEX_LANG_PASCAL, "begin\n  appen");
+        CHECK(codeCloseWordOpener(T, S, LANG, T->length(), 'd') == -1);
+        reset(LEX_LANG_PASCAL, "{ begin }\n  en");
+        CHECK(codeCloseWordOpener(T, S, LANG, T->length(), 'd') == -1);
+        /* Lua is unaffected: its `then` / `do` stay real openers */
+        reset(LEX_LANG_LUA, "if x then\n  g()\n  en");
+        CHECK(codeCloseWordOpener(T, S, LEX_LANG_LUA, T->length(), 'd') == 0);
+
         /* ---- paste re-indent (pure string work) ---- */
         {
             #define PASTE(src, ind, want) do {                                \
@@ -771,6 +866,97 @@ int main(void)
             PASTE("    a\n\n    b", "  ", "a\n\n  b");
             PASTE("a\nb\n", "  ", "a\n  b\n");
             #undef PASTE
+        }
+
+        /* ---- trailing-whitespace trim (edit_fileio.h) ---- */
+        {
+            #define KEEP(lit, md) codeTrimKeep(lit, (int)sizeof(lit) - 1, md)
+            /* plain code: every trailing blank goes */
+            CHECK(KEEP("int a;   ",   0) == 6);
+            CHECK(KEEP("int a;\t\t", 0) == 6);
+            CHECK(KEEP("int a;",      0) == 6);   /* nothing to do */
+            CHECK(KEEP("",            0) == 0);
+            CHECK(KEEP("    ",        0) == 0);   /* all blank: keep none */
+            CHECK(KEEP("\t",          0) == 0);
+            /* indentation is NOT trailing whitespace */
+            CHECK(KEEP("    int a;",  0) == 10);
+            /* Markdown: two trailing spaces are a hard line break */
+            CHECK(KEEP("line  ",      1) == 6);   /* kept, exactly two */
+            CHECK(KEEP("line    ",    1) == 6);   /* 4 spaces normalise to 2 */
+            CHECK(KEEP("line ",       1) == 4);   /* one space is not a break */
+            CHECK(KEEP("line\t\t",    1) == 4);   /* tabs never are */
+            CHECK(KEEP("line \t",     1) == 4);   /* nor a mixed run */
+            CHECK(KEEP("line  \t",    1) == 4);
+            CHECK(KEEP("    ",        1) == 0);   /* no content to break */
+            /* the same line in a non-Markdown file is just whitespace */
+            CHECK(KEEP("line  ",      0) == 4);
+            #undef KEEP
+        }
+
+        /* ---- the trim walk and its caret arithmetic (codeTrimBuffer) ---- */
+        {
+            const char *src = "x   \n\ty\t\n  \nz\n";   /* 14 bytes */
+            int caret;
+
+            {   /* every trailing run goes; indentation and content do not */
+                Fl_Text_Buffer b; b.text(src);
+                caret = 14;
+                CHECK(codeTrimBuffer(&b, 0, &caret) == 6);
+                CHECK(textIs(&b, "x\n\ty\n\nz\n"));
+                CHECK(b.length() == 8);
+                CHECK(caret == 8);              /* end of buffer stays at the end */
+            }
+            {   /* a caret INSIDE a trimmed run lands on the new line end */
+                Fl_Text_Buffer b; b.text(src);
+                caret = 3;                      /* between the 2nd and 3rd space */
+                CHECK(codeTrimBuffer(&b, 0, &caret) == 6);
+                CHECK(caret == 1);              /* just after the 'x' */
+            }
+            {   /* a caret BEFORE every trim does not move */
+                Fl_Text_Buffer b; b.text(src);
+                caret = 0;
+                CHECK(codeTrimBuffer(&b, 0, &caret) == 6);
+                CHECK(caret == 0);
+            }
+            {   /* nothing to do: no edit, no bytes removed */
+                Fl_Text_Buffer b; b.text("a\nb\n");
+                caret = 2;
+                CHECK(codeTrimBuffer(&b, 0, &caret) == 0);
+                CHECK(textIs(&b, "a\nb\n"));
+                CHECK(caret == 2);
+            }
+            {   /* a last line with no trailing newline is still trimmed */
+                Fl_Text_Buffer b; b.text("a\nb   ");
+                caret = 6;
+                CHECK(codeTrimBuffer(&b, 0, &caret) == 3);
+                CHECK(textIs(&b, "a\nb"));
+                CHECK(caret == 3);
+            }
+            {   /* Markdown keeps the two-space break, and only that */
+                Fl_Text_Buffer b; b.text("line  \nnext \n");
+                caret = 0;
+                CHECK(codeTrimBuffer(&b, 1, &caret) == 1);
+                CHECK(textIs(&b, "line  \nnext\n"));
+            }
+            {   /* ... and the same file as plain text loses both */
+                Fl_Text_Buffer b; b.text("line  \nnext \n");
+                caret = 0;
+                CHECK(codeTrimBuffer(&b, 0, &caret) == 3);
+                CHECK(textIs(&b, "line\nnext\n"));
+            }
+            {   /* empty buffer must not walk off either end */
+                Fl_Text_Buffer b; b.text("");
+                caret = 0;
+                CHECK(codeTrimBuffer(&b, 0, &caret) == 0);
+                CHECK(caret == 0);
+            }
+            {   /* a buffer that is nothing but blanks */
+                Fl_Text_Buffer b; b.text("   \n\t\n");
+                caret = 5;
+                CHECK(codeTrimBuffer(&b, 0, &caret) == 4);
+                CHECK(textIs(&b, "\n\n"));
+                CHECK(caret == 1);
+            }
         }
 
         delete T;

@@ -724,6 +724,28 @@ public:
         return 0;
     }
 
+    /* Strip trailing spaces and tabs from every line as ONE undo step, so a
+     * mistaken trim is a single Ctrl+Z. The walk and the caret arithmetic are
+     * codeTrimBuffer() in edit_fileio.h, which is buffer-only and therefore
+     * tested headless. Markdown keeps a two-space hard line break.
+     *
+     * Deliberately edits the BUFFER rather than only the bytes on their way to
+     * disk: the file and what you are looking at must not disagree, or the
+     * document would read as unmodified while differing from the file.
+     * Returns the number of bytes removed. */
+    int trimTrailingBlanks()
+    {
+        int pos = insert_position(), removed;
+        beginUndoGroup();
+        removed = codeTrimBuffer(mTextBuf, mLang == LEX_LANG_MARKDOWN, &pos);
+        endUndoGroup();
+        if (removed) {
+            insert_position(pos);
+            show_insert_position();
+        }
+        return removed;
+    }
+
     int saveFile(const char *path)
     {
         char *t = mTextBuf->text();
