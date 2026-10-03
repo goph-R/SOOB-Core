@@ -465,7 +465,14 @@ char *fl_getenv(const char* v) {
    ANSI/codepage-based, and FLTK's UTF-8 strings are byte-identical to ANSI for
    the ASCII paths these builds use.
 
+   Guarded exactly as every call site below is: without the #if, this Win32
+   body is also fed to a non-Windows compiler, where OSVERSIONINFOA and
+   GetVersionExA do not exist -- which is what stopped the Linux build of
+   fltk_ui's headless model test. No effect on the Windows builds, where the
+   condition is true.
+
    Re-apply if FLTK is ever upgraded. */
+#if defined(WIN32) && !defined(__CYGWIN__)
 static int fl_win98_is_9x(void)
 {
   static int cached = -1;
@@ -477,6 +484,7 @@ static int fl_win98_is_9x(void)
   }
   return cached;
 }
+#endif
 /* --- end SOOB Win98 patch ---------------------------------------------- */
 
 /** Cross-platform function to open files with a UTF-8 encoded name.

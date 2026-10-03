@@ -305,6 +305,14 @@ the Unicode path on NT.
 `<sys/stat.h>` was added to the non-Cygwin WIN32 include branch, since `stat()`
 was previously only needed on the other platforms' side.
 
+`fl_win98_is_9x()` itself is wrapped in the same
+`#if defined(WIN32) && !defined(__CYGWIN__)` as all nine of its call sites.
+It was originally left unguarded, which cost nothing on either Windows target
+but meant its `OSVERSIONINFOA` / `GetVersionExA` body was also handed to a
+non-Windows compiler — so `fl_utf8.cxx`, and therefore the whole library,
+could not build on Linux. That blocked `tools/test_linux.sh`, which needs this
+patched FLTK (not the system one) to link the headless model test.
+
 ## Local FLTK patch: ANSI directory listing on Windows 9x
 
 **Re-apply if FLTK is ever upgraded.** Third instance of the same root cause.

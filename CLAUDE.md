@@ -43,7 +43,14 @@ anything under `scripts/engine/`.
   so no extra `-I` -- that keeps Win98 compile lines short). Headers inside
   `fltk_ui/` include each other by bare name.
 - Tests: `fltk_ui/edit_code_test.cpp` (lexers, no FLTK) and
-  `fltk_ui/edit_code_model_test.cpp` (buffer model, links FLTK).
+  `fltk_ui/edit_code_model_test.cpp` (buffer model, links FLTK). Run both with
+  **`tools/test_linux.sh`** -- it builds the patched FLTK for Linux first,
+  because the model test cannot link the system FLTK (`edit_code.h` uses our
+  `fl_text_display_longest_line` patch). It builds on a copy outside the repo:
+  running `configure` in `vendor/fltk-1.3/FL` would overwrite the tracked
+  Windows `config.h` and `FL/abi-version.h` and break the Win98 build. Put
+  model-layer logic in a buffer-only function (as `edit_find.h` /
+  `edit_match.h` do) so it can be tested here rather than by hand on Win98.
 - Win98 batch files must not `if exist` a path through `SOOB-Core`:
   COMMAND.COM's builtins resolve 8.3 names only, and `SOOB-Core` is not one.
   Passing such paths to the compiler / linker is fine.

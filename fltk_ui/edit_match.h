@@ -57,6 +57,11 @@ static int codeMatchBracket(Fl_Text_Buffer *b, Fl_Text_Buffer *sty, int p)
     int dir, depth = 0, i, n = b->length(), steps = 0;
     char c = codeMatchCh(b, p);
     char want = (char)codeBracketPartner(c, &dir);
+    /* Not a bracket: codeBracketPartner() left `dir` untouched, so scanning
+     * would step by a garbage stride. codeFindPair() never calls us that way,
+     * but the guard means the contract is enforced here rather than resting
+     * on the only caller. */
+    if (!want) return -1;
     for (i = p + dir; i >= 0 && i < n && steps < CODE_MATCH_LIMIT; i += dir, steps++) {
         char d = codeMatchCh(b, i);
         if (d != c && d != want) continue;
