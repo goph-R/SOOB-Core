@@ -286,7 +286,8 @@ int main(void)
             { lexBashBuiltins, LEX_COUNT(lexBashBuiltins), 0 },
             { lexBatKeywords,  LEX_COUNT(lexBatKeywords),  1 },
             { lexBatOps,       LEX_COUNT(lexBatOps),       1 },
-            { lexBatBuiltins,  LEX_COUNT(lexBatBuiltins),  1 }
+            { lexBatBuiltins,  LEX_COUNT(lexBatBuiltins),  1 },
+            { lexJsonWords,    LEX_COUNT(lexJsonWords),    0 }
         };
         int t, k;
         for (t = 0; t < (int)(sizeof(tabs) / sizeof(tabs[0])); t++)
@@ -644,6 +645,164 @@ int main(void)
         CHECK(lexLangFromPath("codeedit.cpp")== LEX_LANG_C);
         CHECK(lexLangFromPath("notes.md")    == LEX_LANG_MARKDOWN);
         CHECK(lexLangFromPath("noext")       == LEX_LANG_TEXT);
+    }
+
+    /* ---------------- INI ---------------- */
+    {
+        const char *src =
+            "; a comment\n"
+            "# also a comment\n"
+            "[vcache]\n"
+            "MinFileCache=4096\n"
+            "MaxFileCache = 65536\n"
+            "name=\"quoted value\"\n"
+            "path=C:\\WINDOWS\n"
+            "flag=yes ; not a comment, cmd keeps it in the value\n"
+            "bare line with no equals\n"
+            "[Section With Spaces]\n";
+        char sty[1024];
+        lexText(LEX_LANG_INI, src, sty);
+
+        CHECK(allSlot(src, sty, "; a comment", LEX_COMMENT));
+        CHECK(allSlot(src, sty, "# also a comment", LEX_COMMENT));
+        CHECK(allSlot(src, sty, "[vcache]", LEX_TYPE));
+        CHECK(allSlot(src, sty, "[Section With Spaces]", LEX_TYPE));
+        CHECK(allSlot(src, sty, "MinFileCache", LEX_KEYWORD));
+        CHECK(allSlot(src, sty, "MaxFileCache", LEX_KEYWORD));
+        CHECK(slotAt(src, sty, "4096")  == LEX_NUMBER);
+        CHECK(slotAt(src, sty, "65536") == LEX_NUMBER);
+        CHECK(allSlot(src, sty, "\"quoted value\"", LEX_STRING));
+        /* Windows' own parser only honours ';' at the start of a line, so an
+           inline one is part of the value and must NOT go grey */
+        CHECK(slotAt(src, sty, "; not a comment") == LEX_PLAIN);
+        /* a line with no '=' is not a setting */
+        CHECK(allSlot(src, sty, "bare line with no equals", LEX_PLAIN));
+        /* INI carries no state across lines */
+        CHECK(carryAfterLine(src, sty, 2) == LS_NORMAL);
+        CHECK(carryAfterLine(src, sty, 5) == LS_NORMAL);
+    }
+
+    /* ---------------- XML ---------------- */
+    {
+        const char *src =
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+            "<!-- a comment -->\n"
+            "<config name=\"x\">\n"
+            "  <script>\n"
+            "    var a = 1;\n"
+            "  </script>\n"
+            "  <style>\n"
+            "    body { }\n"
+            "  </style>\n"
+            "  <value>42</value>\n"
+            "  <br/>\n"
+            "</config>\n";
+        char sty[1024];
+        lexText(LEX_LANG_XML, src, sty);
+
+        /* the declaration is a processing instruction, not stray text */
+        CHECK(allSlot(src, sty, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+                      LEX_DIRECTIVE));
+        CHECK(allSlot(src, sty, "<!-- a comment -->", LEX_COMMENT));
+        CHECK(slotAt(src, sty, "config")  == LEX_TYPE);
+        CHECK(slotAt(src, sty, "\"x\"")   == LEX_STRING);
+        /* THE POINT of a separate XML language: <script> and <style> are
+           ordinary element names here. The island would only ever show up as
+           state CARRIED to the next line, so the tags must be on their own
+           lines for this to test anything -- with them closed on the same
+           line it passes either way. */
+        CHECK(slotAt(src, sty, "script") == LEX_TYPE);
+        CHECK(carryAfterLine(src, sty, 3) == LS_NORMAL);   /* after <script> */
+        CHECK(slotAt(src, sty, "var") == LEX_PLAIN);       /* NOT lexed as JS */
+        CHECK(slotAt(src, sty, "style") == LEX_TYPE);
+        CHECK(carryAfterLine(src, sty, 6) == LS_NORMAL);   /* after <style> */
+        CHECK(slotAt(src, sty, "body") == LEX_PLAIN);      /* NOT lexed as CSS */
+        CHECK(slotAt(src, sty, "42") == LEX_PLAIN);        /* element text */
+    }
+
+    /* HTML must be UNCHANGED: there, <script> really does open a JS island */
+    {
+        const char *src =
+            "<html>\n"
+            "<script>var a = 1;\n"
+            "</script>\n"
+            "<style>body { color: red; }\n"
+            "</style>\n"
+            "</html>\n";
+        char sty[1024];
+        lexText(LEX_LANG_HTML, src, sty);
+        CHECK(carryAfterLine(src, sty, 1) == LS_HTML_JS);
+        CHECK(slotAt(src, sty, "var") == LEX_KEYWORD);     /* lexed as JS */
+        CHECK(carryAfterLine(src, sty, 3) == LS_HTML_CSS);
+    }
+
+    /* ---------------- extension -> language ---------------- */
+    {
+        CHECK(lexLangFromPath("codeedit.ini")  == LEX_LANG_INI);
+        CHECK(lexLangFromPath("SYSTEM.INI")    == LEX_LANG_INI);
+        CHECK(lexLangFromPath("oemsetup.inf")  == LEX_LANG_INI);
+        CHECK(lexLangFromPath("x.cfg")         == LEX_LANG_INI);
+        CHECK(lexLangFromPath("pom.xml")       == LEX_LANG_XML);
+        CHECK(lexLangFromPath("icon.svg")      == LEX_LANG_XML);
+        CHECK(lexLangFromPath("t.XSLT")        == LEX_LANG_XML);
+        CHECK(lexLangFromPath("page.html")     == LEX_LANG_HTML);  /* still HTML */
+    }
+
+    /* ---------------- JSON ---------------- */
+    {
+        const char *src =
+            "{\n"
+            "  \"name\": \"codeedit\",\n"
+            "  \"version\": 1.6,\n"
+            "  \"tabs\": true,\n"
+            "  \"wrap\": null,\n"
+            "  \"sizes\": [12, -4, 1e3],\n"
+            "  \"nested\": { \"k\": \"v\" },\n"
+            "  \"esc\": \"a \\\" b\",\n"
+            "  oops: 1\n"
+            "}\n";
+        char sty[1024];
+        lexText(LEX_LANG_JSON, src, sty);
+
+        /* a string followed by ':' is a key, any other string is a value --
+           the whole reason this is not just "lex it as JavaScript" */
+        CHECK(allSlot(src, sty, "\"name\"",     LEX_TYPE));
+        CHECK(allSlot(src, sty, "\"codeedit\"", LEX_STRING));
+        CHECK(allSlot(src, sty, "\"version\"",  LEX_TYPE));
+        CHECK(allSlot(src, sty, "\"k\"",        LEX_TYPE));
+        CHECK(allSlot(src, sty, "\"v\"",        LEX_STRING));
+        CHECK(slotAt(src, sty, "1.6")  == LEX_NUMBER);
+        CHECK(slotAt(src, sty, "-4")   == LEX_NUMBER);
+        CHECK(slotAt(src, sty, "1e3")  == LEX_NUMBER);
+        CHECK(slotAt(src, sty, "true") == LEX_KEYWORD);
+        CHECK(slotAt(src, sty, "null") == LEX_KEYWORD);
+        /* an escaped quote must not end the string early */
+        CHECK(allSlot(src, sty, "\"a \\\" b\"", LEX_STRING));
+        /* an unquoted key is invalid JSON and is flagged */
+        CHECK(allSlot(src, sty, "oops", LEX_ERROR));
+        CHECK(carryAfterLine(src, sty, 1) == LS_NORMAL);
+    }
+
+    /* ---------------- the free extension aliases ---------------- */
+    {
+        CHECK(lexLangFromPath("shader.glsl")  == LEX_LANG_C);
+        CHECK(lexLangFromPath("a.vert")       == LEX_LANG_C);
+        CHECK(lexLangFromPath("a.frag")       == LEX_LANG_C);
+        CHECK(lexLangFromPath("t.inl")        == LEX_LANG_C);
+        CHECK(lexLangFromPath("t.incl")       == LEX_LANG_C);
+        CHECK(lexLangFromPath("app.rc")       == LEX_LANG_C);
+        CHECK(lexLangFromPath("x.ts")         == LEX_LANG_JS);
+        CHECK(lexLangFromPath("x.tsx")        == LEX_LANG_JS);
+        CHECK(lexLangFromPath("level.tmx")    == LEX_LANG_XML);
+        CHECK(lexLangFromPath("res.qrc")      == LEX_LANG_XML);
+        CHECK(lexLangFromPath("a.csproj")     == LEX_LANG_XML);
+        CHECK(lexLangFromPath("b.props")      == LEX_LANG_XML);
+        CHECK(lexLangFromPath("package.json") == LEX_LANG_JSON);
+        /* the aliases double as markdown fence tags where they share a lexer */
+        CHECK(lexMdFenceSub("glsl", 4) == lexMdFenceSub("c", 1));
+        CHECK(lexMdFenceSub("ts", 2)   == lexMdFenceSub("js", 2));
+        /* ... but JSON is deliberately NOT a fence tag: see edit_lex.h */
+        CHECK(lexMdFenceSub("json", 4) == 0);
     }
 
     if (failures) { printf("\n%d FAILURE(S)\n", failures); return 1; }

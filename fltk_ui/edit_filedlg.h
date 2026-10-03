@@ -80,7 +80,10 @@ static void codeFileDlgSetOwner(void *nativeWindowHandle)
     "Source files\0*.lua;*.pas;*.pp;*.inc;*.dpr;*.lpr;*.md;" \
         "*.c;*.cc;*.cpp;*.cxx;*.h;*.hh;*.hpp;*.hxx;*.java;*.js;*.mjs;*.cjs;*.jsx;" \
         "*.py;*.pyw;*.css;*.htm;*.html;*.xhtml;*.php;*.phtml;*.sql;" \
-        "*.sh;*.bash;*.bat;*.cmd\0" \
+        "*.sh;*.bash;*.bat;*.cmd;" \
+        "*.ini;*.cfg;*.inf;*.xml;*.xsd;*.xsl;*.xslt;*.svg;*.json;" \
+        "*.glsl;*.vert;*.frag;*.inl;*.incl;*.rc;*.ts;*.tsx;" \
+        "*.tmx;*.qrc;*.csproj;*.props\0" \
     "Lua scripts (*.lua)\0*.lua\0" \
     "Pascal (*.pas;*.pp;*.inc;*.dpr)\0*.pas;*.pp;*.inc;*.dpr\0" \
     "Markdown (*.md)\0*.md\0" \
@@ -88,12 +91,17 @@ static void codeFileDlgSetOwner(void *nativeWindowHandle)
     "SQL (*.sql)\0*.sql\0" \
     "Shell scripts (*.sh;*.bash)\0*.sh;*.bash\0" \
     "Batch files (*.bat;*.cmd)\0*.bat;*.cmd\0" \
+    "INI / config (*.ini;*.cfg;*.inf)\0*.ini;*.cfg;*.inf\0" \
+    "XML (*.xml;*.xsd;*.xsl;*.xslt;*.svg)\0*.xml;*.xsd;*.xsl;*.xslt;*.svg\0" \
+    "JSON (*.json)\0*.json\0" \
     "All files (*.*)\0*.*\0"
 
 /* FLTK's own chooser uses a different syntax for the same idea. */
 #define CODE_FILTER_FLTK \
     "Source files\t*.{lua,pas,pp,inc,dpr,lpr,md,c,cc,cpp,cxx,h,hh,hpp,hxx,java,js,mjs,cjs,jsx," \
-        "py,pyw,css,htm,html,xhtml,php,phtml,sql,sh,bash,bat,cmd}"
+        "py,pyw,css,htm,html,xhtml,php,phtml,sql,sh,bash,bat,cmd," \
+        "ini,cfg,inf,xml,xsd,xsl,xslt,svg,json," \
+        "glsl,vert,frag,inl,incl,rc,ts,tsx,tmx,qrc,csproj,props}"
 
 #if defined(WIN32) || defined(_WIN32)
 

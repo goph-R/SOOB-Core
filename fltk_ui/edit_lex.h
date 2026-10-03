@@ -70,7 +70,10 @@ enum {
     LEX_LANG_PHP,        /* HTML host with <?php ?> islands */
     LEX_LANG_SQL,
     LEX_LANG_BASH,       /* sh / bash shell scripts            */
-    LEX_LANG_BAT         /* Windows batch: cmd and COMMAND.COM */
+    LEX_LANG_BAT,        /* Windows batch: cmd and COMMAND.COM */
+    LEX_LANG_INI,        /* key=value with [sections]          */
+    LEX_LANG_XML,        /* the HTML lexer, minus the HTML     */
+    LEX_LANG_JSON        /* keys told apart from string values */
 };
 
 /* ---- carry state -------------------------------------------------------
@@ -875,7 +878,7 @@ static int lexHtmlPhpState(int inner)
 
 /* HTML, and PHP when php is set: <?php / <?= / <? open a code island that
  * runs to "?>" (or to the end of the file, as in a pure-PHP file). */
-static int lexHtmlLineEx(int st, const char *s, int n, char *out, int php)
+static int lexHtmlLineEx(int st, const char *s, int n, char *out, int php, int xml)
 {
     int i = 0;
     if (st < LS_HTML_COMMENT || st > LS_PHP_SQ || (!php && st >= LS_PHP)) st = LS_NORMAL;
@@ -938,6 +941,17 @@ static int lexHtmlLineEx(int st, const char *s, int n, char *out, int php)
             continue;
         }
 
+        /* <?xml version="1.0"?> and any other processing instruction. In
+           HTML this is left alone; with php set it is a code island instead,
+           which is why the test sits after that one. */
+        if (xml && s[i] == '<' && i + 1 < n && s[i + 1] == '?') {
+            int e = i + 2;
+            while (e < n && !(s[e] == '?' && e + 1 < n && s[e + 1] == '>')) e++;
+            if (e < n) e += 2;
+            lexFill(out, i, e, LEX_DIRECTIVE);
+            i = e;
+            continue;
+        }
         if (s[i] == '<') {
             if (lexStartsCI(s, i, n, "<!--")) {
                 lexFill(out, i, i + 4, LEX_COMMENT);
@@ -960,8 +974,10 @@ static int lexHtmlLineEx(int st, const char *s, int n, char *out, int php)
                 b = i;
                 while (i < n && (lexIsAlnum((unsigned char)s[i]) || s[i] == '-' || s[i] == ':')) i++;
                 lexFill(out, b, i, LEX_TYPE);
-                if (!closing && i - b == 6 && lexStartsCI(s, b, n, "script")) kind = 1;
-                if (!closing && i - b == 5 && lexStartsCI(s, b, n, "style"))  kind = 2;
+                /* <script> / <style> switch the lexer to JS / CSS -- an
+                   HTML rule. In XML those are ordinary element names. */
+                if (!xml && !closing && i - b == 6 && lexStartsCI(s, b, n, "script")) kind = 1;
+                if (!xml && !closing && i - b == 5 && lexStartsCI(s, b, n, "style"))  kind = 2;
                 i = lexHtmlTagBody(s, i, n, out, &done, &selfClose);
                 if (!done) st = LS_HTML_TAG;
                 else if (kind && !selfClose) st = (kind == 1) ? LS_HTML_JS : LS_HTML_CSS;
@@ -984,7 +1000,7 @@ static int lexHtmlLineEx(int st, const char *s, int n, char *out, int php)
 
 static int lexHtmlLine(int st, const char *s, int n, char *out)
 {
-    return lexHtmlLineEx(st, s, n, out, 0);
+    return lexHtmlLineEx(st, s, n, out, 0, 0);
 }
 
 /* ---- Markdown ---------------------------------------------------------- */
@@ -994,9 +1010,14 @@ static const char *const lexMdPascalAlias[] = {
 static const char *const lexMdLuaAlias[] = { "lua" };
 
 /* Fence tags and file extensions in one table per language (sorted). */
-static const char *const lexCNames[]    = { "c","cc","cpp","cxx","h","hh","hpp","hxx" };
+/* Doubles as the markdown fence tag list, so ```glsl gets C highlighting
+   too. .rc is a Windows resource script: C preprocessor plus string tables. */
+static const char *const lexCNames[]    = { "c","cc","cpp","cxx","frag","glsl",
+                                            "h","hh","hpp","hxx","incl","inl",
+                                            "rc","vert" };
 static const char *const lexJavaNames[] = { "java" };
-static const char *const lexJsNames[]   = { "cjs","javascript","js","jsx","mjs" };
+static const char *const lexJsNames[]   = { "cjs","javascript","js","jsx",
+                                            "mjs","ts","tsx" };
 static const char *const lexPyNames[]   = { "py","python","pyw" };
 static const char *const lexCssNames[]  = { "css" };
 static const char *const lexHtmlNames[] = { "htm","html","xhtml" };
@@ -1134,6 +1155,120 @@ static int lexBatLine(int st, const char *s, int n, char *out)
         }
 
         if (c && strchr("=+<>|&()^,;*?/.-", (char)c)) { out[i++] = LEX_CH(LEX_MARKER); continue; }
+        out[i++] = LEX_CH(LEX_PLAIN);
+    }
+    return LS_NORMAL;
+}
+
+/* ---- JSON --------------------------------------------------------------
+ * The one thing worth having over "it is nearly JavaScript": a quoted string
+ * followed by ':' is a KEY and gets its own colour, so the shape of a
+ * document is readable at a glance instead of every string looking alike.
+ *
+ * A bare word that is not true / false / null is flagged as an error -- in
+ * strict JSON an unquoted key really is invalid, and that is the single most
+ * common mistake in a hand-edited file. A // comment is left plain rather
+ * than flagged, since JSONC files are common enough not to shout about.
+ *
+ * No carry state: a JSON string cannot span lines.
+ */
+static const char *const lexJsonWords[] = { "false", "null", "true" };
+
+static int lexJsonLine(int st, const char *s, int n, char *out)
+{
+    int i = 0, b, j, len;
+    (void)st;
+    while (i < n) {
+        unsigned char c = (unsigned char)s[i];
+
+        if (c == '"') {
+            b = i++;
+            while (i < n) {
+                if (s[i] == '\\' && i + 1 < n) { i += 2; continue; }
+                if (s[i] == '"') { i++; break; }
+                i++;
+            }
+            j = i;                                  /* ':' after it => a key */
+            while (j < n && (s[j] == ' ' || s[j] == '\t')) j++;
+            lexFill(out, b, i, (j < n && s[j] == ':') ? LEX_TYPE : LEX_STRING);
+            continue;
+        }
+        if (lexIsDigit(c) ||
+            (c == '-' && i + 1 < n && lexIsDigit((unsigned char)s[i + 1]))) {
+            b = i++;
+            while (i < n && (lexIsAlnum((unsigned char)s[i]) || s[i] == '.' ||
+                             s[i] == '+' || s[i] == '-')) i++;
+            lexFill(out, b, i, LEX_NUMBER);
+            continue;
+        }
+        if (lexIsAlpha(c)) {
+            b = i;
+            while (i < n && lexIsAlnum((unsigned char)s[i])) i++;
+            len = i - b;
+            lexFill(out, b, i,
+                    lexInTable(lexJsonWords, LEX_COUNT(lexJsonWords), s + b, len, 0)
+                        ? LEX_KEYWORD : LEX_ERROR);
+            continue;
+        }
+        if (c && strchr("{}[],:", (char)c)) { out[i++] = LEX_CH(LEX_MARKER); continue; }
+        out[i++] = LEX_CH(LEX_PLAIN);
+    }
+    return LS_NORMAL;
+}
+
+/* ---- INI --------------------------------------------------------------
+ * key=value with [sections]. Comments are ';' or '#' and only at the START
+ * of a line, which is what Windows' own GetPrivateProfileString does -- an
+ * inline ';' is part of the value, so colouring it as a comment would be a
+ * lie about what the parser sees.
+ *
+ * No carry state: every construct begins and ends on its own line.
+ */
+static int lexIniLine(int st, const char *s, int n, char *out)
+{
+    int i = 0, e, eq;
+    (void)st;
+
+    while (i < n && (s[i] == ' ' || s[i] == '\t')) out[i++] = LEX_CH(LEX_PLAIN);
+
+    if (i < n && (s[i] == ';' || s[i] == '#')) {
+        lexFill(out, i, n, LEX_COMMENT);
+        return LS_NORMAL;
+    }
+    if (i < n && s[i] == '[') {                      /* [section] */
+        e = i;
+        while (e < n && s[e] != ']') e++;
+        if (e < n) e++;
+        lexFill(out, i, e, LEX_TYPE);
+        lexFill(out, e, n, LEX_PLAIN);               /* anything after it */
+        return LS_NORMAL;
+    }
+
+    for (eq = i; eq < n && s[eq] != '='; eq++) ;
+    if (eq >= n) {                                   /* no '=': not a setting */
+        lexFill(out, i, n, LEX_PLAIN);
+        return LS_NORMAL;
+    }
+    lexFill(out, i, eq, LEX_KEYWORD);                /* the key */
+    out[eq] = LEX_CH(LEX_MARKER);
+    i = eq + 1;
+
+    while (i < n) {                                  /* the value */
+        char c = s[i];
+        if (c == '"' || c == '\'') {
+            e = i++;
+            while (i < n && s[i] != c) i++;
+            if (i < n) i++;
+            lexFill(out, e, i, LEX_STRING);
+            continue;
+        }
+        if (lexIsDigit((unsigned char)c) ||
+            ((c == '-' || c == '+') && i + 1 < n && lexIsDigit((unsigned char)s[i + 1]))) {
+            e = i++;
+            while (i < n && (lexIsAlnum((unsigned char)s[i]) || s[i] == '.')) i++;
+            lexFill(out, e, i, LEX_NUMBER);
+            continue;
+        }
         out[i++] = LEX_CH(LEX_PLAIN);
     }
     return LS_NORMAL;
@@ -1356,10 +1491,13 @@ static int lexLineRaw(int lang, int st, const char *s, int n, char *out)
     case LEX_LANG_PYTHON:   return lexCfLine(&lexCfPy,   st, s, n, out);
     case LEX_LANG_CSS:      return lexCfLine(&lexCfCss,  st, s, n, out);
     case LEX_LANG_HTML:     return lexHtmlLine(st, s, n, out);
-    case LEX_LANG_PHP:      return lexHtmlLineEx(st, s, n, out, 1);
+    case LEX_LANG_PHP:      return lexHtmlLineEx(st, s, n, out, 1, 0);
+    case LEX_LANG_XML:      return lexHtmlLineEx(st, s, n, out, 0, 1);
     case LEX_LANG_SQL:      return lexCfLine(&lexCfSql, st, s, n, out);
     case LEX_LANG_BASH:     return lexCfLine(&lexCfBash, st, s, n, out);
     case LEX_LANG_BAT:      return lexBatLine(st, s, n, out);
+    case LEX_LANG_INI:      return lexIniLine(st, s, n, out);
+    case LEX_LANG_JSON:     return lexJsonLine(st, s, n, out);
     default:                lexFill(out, 0, n, LEX_PLAIN); return LS_NORMAL;
     }
 }
@@ -1409,6 +1547,25 @@ static int lexLangFromPath(const char *path)
         static const char *const batExt[] = { "bat", "cmd" };
         if (lexInTable(batExt, LEX_COUNT(batExt), d, (int)strlen(d), 1))
             return LEX_LANG_BAT;
+    }
+    {   /* .inf is Windows setup, same key=value-with-[sections] shape */
+        static const char *const iniExt[] = { "cfg", "inf", "ini" };
+        if (lexInTable(iniExt, LEX_COUNT(iniExt), d, (int)strlen(d), 1))
+            return LEX_LANG_INI;
+    }
+    {   /* Not a fence tag: ```json would push LEX_MD_NSUB to 12 and run the
+         * fence carry states into LS_CF_BLOCK -- the same wall as ```bash. */
+        static const char *const jsonExt[] = { "json" };
+        if (lexInTable(jsonExt, LEX_COUNT(jsonExt), d, (int)strlen(d), 1))
+            return LEX_LANG_JSON;
+    }
+    {
+        /* .tmx is a Tiled map, .qrc a Qt resource, .csproj / .props MSBuild
+         * -- all XML documents that do not say so in their extension. */
+        static const char *const xmlExt[] = { "csproj", "props", "qrc", "svg",
+                                              "tmx", "xml", "xsd", "xsl", "xslt" };
+        if (lexInTable(xmlExt, LEX_COUNT(xmlExt), d, (int)strlen(d), 1))
+            return LEX_LANG_XML;
     }
     /* The other languages share one name table for extensions and fence tags. */
     {
