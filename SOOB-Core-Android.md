@@ -4,7 +4,7 @@ A native Android app that **plays a 2D SOOB-Core game bundle** (Lua scripts +
 `assets.lua` + assets), so a title that already ships on desktop and web —
 Find5 first — gets an Android build with **no game-side changes**. Same
 contract as [`SOOB-Core-Web`](SOOB-Core-Web.md): the host reimplements the
-25-binding surface in [`SOOB-Lua.md`](SOOB-Lua.md); the Lua runs unchanged.
+28-binding surface in [`SOOB-Lua.md`](SOOB-Lua.md); the Lua runs unchanged.
 **3D (SOOB-Engine) is out of scope.**
 
 The repo is the *player*, not a Find5 app: it ships as an Android **library
@@ -78,7 +78,7 @@ The web port had to answer two questions: *what exactly is the binding
 surface*, and *what geometry does each binding do*. Both are now answered in
 running code:
 
-- `src/wasm/bridge.c` (651 lines) already registers all 25 bindings on a
+- `src/wasm/bridge.c` (651 lines) already registers all 28 bindings on a
   `lua_State`, sandboxes `io`/`os`, walks `assets.lua`, and marshals every
   argument shape (option tables, defaults) out of `script.h`. Only its host
   imports are Emscripten-specific.
@@ -120,6 +120,7 @@ Everything from `optNum`/`optStr` down through the `scr*` wrappers and the
 | Web | Android |
 |---|---|
 | `EM_JS(void, js_drawRegion, …)` | cached `jmethodID` → `Host.drawRegion(String, DoubleBuffer)` |
+| `EM_JS(void, js_drawTexRect, …)` | `Host.drawTexRect(String)` — same 25-slot arg bundle; the source rect comes from the call, not the region table |
 | `HEAPF64.subarray(a>>3, …)` — zero-copy view of the C scratch array | `NewDirectByteBuffer(g_args, sizeof g_args).asDoubleBuffer()` — created **once** at init, also zero-copy |
 | `UTF8ToString(s)` | `NewStringUTF` (bindings are ASCII today — see risks) |
 | exported `_soob_*` called via `ccall`/`cwrap` | `JNIEXPORT` `Java_net_dynart_soob_Lua_*` natives |

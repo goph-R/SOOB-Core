@@ -90,6 +90,11 @@ Nothing is registered, so these slices have no names: `regionSize`,
 will not see them. Use a named region when you want those; use
 `drawTexRect` when the rectangle is a calculation.
 
+**Portability:** pass a texture NAME from the `textures` table, not a path,
+if the game is to run on the web or Android ports. Native resolves an
+unknown token as a file path; those hosts load only what `assets.lua`
+declared, so a bare path finds nothing there.
+
 The source rect is **not** clipped to the texture and the texture is bound
 `GL_CLAMP_TO_EDGE`, so an off-by-one in `srcW` smears the edge pixel rather
 than raising an error — worth knowing when the numbers come from arithmetic

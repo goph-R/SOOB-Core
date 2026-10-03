@@ -5,7 +5,7 @@ A native iOS app that **plays a 2D SOOB-Core game bundle** (Lua scripts +
 Android gets an iOS build with **no game-side changes**. Same contract as
 [`SOOB-Core-Web`](SOOB-Core-Web.md) and
 [`SOOB-Core-Android`](SOOB-Core-Android.md): the host reimplements the
-25-binding surface in [`SOOB-Lua.md`](SOOB-Lua.md); the Lua runs unchanged.
+28-binding surface in [`SOOB-Lua.md`](SOOB-Lua.md); the Lua runs unchanged.
 **3D (SOOB-Engine) is out of scope.**
 
 Like the Android repo, this is the *player*, not one game's app: a framework

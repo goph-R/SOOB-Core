@@ -7,7 +7,7 @@ port now or later. This document covers only the 2D core.
 
 ## Why this is tractable
 
-The game is pure Lua talking to a **narrow, documented C surface** — the 24
+The game is pure Lua talking to a **narrow, documented C surface** — the 28
 bindings + the lifecycle/event hooks in [`SOOB-Lua.md`](SOOB-Lua.md). Porting
 means reimplementing *that surface* in JavaScript against web APIs; the Lua
 scripts, `engine.scene/widget/animation/transition`, and `assets.lua` run
@@ -18,7 +18,7 @@ scripts, `engine.scene/widget/animation/transition`, and `assets.lua` run
   assets.lua                                ← unchanged (run to build registries)
         │  calls drawRegion / soundPlay / optGet / …   (SOOB-Lua.md surface)
         ▼
-  JS host shim   ── implements the 24 bindings + hooks ──┐
+  JS host shim   ── implements the 28 bindings + hooks ──┐
         │                                                │
    Lua-in-browser (WASM)        WebGL │ Web Audio │ DOM events │ localStorage
 ```
@@ -50,8 +50,8 @@ Group the [`SOOB-Lua.md`](SOOB-Lua.md) surface by subsystem:
 
 | Area | Bindings | Web implementation |
 |---|---|---|
-| **Rendering** | `drawRegion` `drawText` `drawEllipse` `drawQuad` `drawBg` `drawBlur` | **WebGL1** sprite batcher: one textured-quad shader with a per-vertex color/alpha tint (matches `uiIconUVColor` exactly — UVs + RGBA). `drawText` = BMFont quads; `drawEllipse` = **triangle-strip ribbon** (NOT `LINE_STRIP` — browsers clamp `gl.lineWidth` to 1, and Find5 draws the find/reveal rings with real thickness ~2.5, so a line strip won't reproduce them); `drawQuad` = flat quad; `drawBg` = cover-fit quad; `drawBlur` = render-to-texture **downsample** to build the blur (the `texBlur` equivalent — an FBO pass), then draw it stretched up. WebGL1 (universal) is enough; no WebGL2 needed. (Canvas2D is a viable MVP but loses easy tint/alpha parity.) |
-| **Queries** | `viewSize` `regionSize` `regionSlice` `textWidth` | Pure JS off the loaded region table + BMFont metrics. `viewSize` returns the current virtual-canvas size (see scaling). |
+| **Rendering** | `drawRegion` `drawTexRect` `drawText` `drawEllipse` `drawQuad` `drawBg` `drawBlur` | **WebGL1** sprite batcher: one textured-quad shader with a per-vertex color/alpha tint (matches `uiIconUVColor` exactly — UVs + RGBA). `drawText` = BMFont quads; `drawEllipse` = **triangle-strip ribbon** (NOT `LINE_STRIP` — browsers clamp `gl.lineWidth` to 1, and Find5 draws the find/reveal rings with real thickness ~2.5, so a line strip won't reproduce them); `drawQuad` = flat quad; `drawBg` = cover-fit quad; `drawBlur` = render-to-texture **downsample** to build the blur (the `texBlur` equivalent — an FBO pass), then draw it stretched up. WebGL1 (universal) is enough; no WebGL2 needed. (Canvas2D is a viable MVP but loses easy tint/alpha parity.) |
+| **Queries** | `viewSize` `regionSize` `regionSlice` `textureSize` `textWidth` | Pure JS off the loaded region/texture tables + BMFont metrics. `drawTexRect` shares `drawRegion`'s geometry (one `drawTexBase`), differing only in whether the source rect comes from the region table or from the call. `viewSize` returns the current virtual-canvas size (see scaling). |
 | **Audio** | `soundPlay` `musicPlay` `musicStop` `musicVolume` | **Web Audio**. Sounds → decoded `AudioBuffer`s, played via `AudioBufferSourceNode`. Music → two `GainNode`s for crossfade (`linearRampToValueAtTime` over `fadeSec`), `musicVolume` = master gain. |
 | **Input (polling)** | `keyDown` `mousePos` `mouseDown` `keyModifiers` | Held-keys `Set`, last pointer position, button state — all fed from DOM listeners. |
 | **Options** | `optSet` `optGet` `optSave` `optLoad` | In-memory opts table; `optSave`/`optLoad` ↔ **localStorage** (serialize the table to a string, reload as a chunk). The `io` sandbox you already enforce maps perfectly. |
