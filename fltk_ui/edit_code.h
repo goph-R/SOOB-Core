@@ -556,6 +556,7 @@ public:
         mCharPx  = 0;
         mEnc     = CODE_ENC_UTF8;
         mCrlf    = CODE_DEFAULT_CRLF;
+        mQuietPoke = 0;
         fl_text_display_longest_line = longestLineHook;   /* see trackLongest() */
 
         linenumber_width(codeLineNumbers ? codeGutterWidth() : 0);
@@ -745,7 +746,19 @@ public:
         textsize(codeFontSize);
         linenumber_size(codeFontSize);
         linenumber_width(codeLineNumbers ? codeGutterWidth() : 0);
-        mTextBuf->tab_distance(codeIndent);
+        /* Fl_Text_Buffer::tab_distance() is not a plain setter: it announces
+         * "the whole buffer was replaced" (nInserted == nDeleted == length,
+         * with the entire text as deletedText) so that displays re-layout.
+         * Our modify callback cannot tell that from a real edit, so without
+         * the guard every OK in the Settings dialog marked each open file
+         * modified and pushed a junk undo step -- a tab width is a DISPLAY
+         * setting and changes no text. Skipped entirely when the value has
+         * not actually changed, which is the common case. */
+        if (mTextBuf->tab_distance() != codeIndent) {
+            mQuietPoke = 1;
+            mTextBuf->tab_distance(codeIndent);
+            mQuietPoke = 0;
+        }
         mCharPx = 0;
         mWrapPx = 0;
         rescanLongest();
@@ -1260,12 +1273,18 @@ private:
     int mEnc;                     /* CODE_ENC_*: how the file is saved */
     int mCrlf;                    /* 1 = CRLF line ends on disk, 0 = LF */
     int mCharPx;                  /* one monospaced cell, px; 0 = not measured yet */
+    int mQuietPoke;               /* inside a display-only buffer poke, see below */
 
     static void staticModifyCb(int pos, int nInserted, int nDeleted,
                                int nRestyled, const char *deletedText, void *arg)
     {
         (void)nRestyled;
         CodeEditor *ed = (CodeEditor *)arg;
+        /* A display-only poke (see applySettings): the text is byte-for-byte
+         * what it was, so there is nothing to record, nothing to re-style and
+         * nothing to mark dirty. applySettings() rescans the longest line
+         * itself straight afterwards. */
+        if (ed->mQuietPoke) return;
         /* Record BEFORE restyling: codeUndoRecord reads the inserted text back
          * out of the buffer, and styling does not touch the text buffer, so the
          * order is not load-bearing -- but recording first keeps the undo stack

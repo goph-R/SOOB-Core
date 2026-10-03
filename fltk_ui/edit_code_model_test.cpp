@@ -111,6 +111,17 @@ static int slotAt(const char *needle)
     return r;
 }
 
+/* Records what a modify callback was told, for the tab_distance check. */
+static struct { int calls, pos, nIns, nDel, hadText; } gMod;
+static void modSpy(int pos, int nInserted, int nDeleted, int nRestyled,
+                   const char *deletedText, void *)
+{
+    (void)nRestyled;
+    gMod.calls++;
+    gMod.pos = pos; gMod.nIns = nInserted; gMod.nDel = nDeleted;
+    gMod.hadText = deletedText != 0;
+}
+
 int main(void)
 {
     T = new Fl_Text_Buffer();
@@ -581,6 +592,46 @@ int main(void)
          * Every rule here is otherwise only observable by typing on the
          * target machine, which is exactly why it lives in buffer-only
          * functions. */
+
+        /* ---- Fl_Text_Buffer::tab_distance() reports a whole-buffer edit ----
+         * This is WHY CodeEditor::applySettings() guards the call with
+         * mQuietPoke: tab_distance() is not a plain setter, it fires a modify
+         * callback claiming the entire text was replaced so that displays
+         * re-layout. Taken at face value that marked every open document
+         * modified on each Settings OK and pushed a junk undo step.
+         *
+         * Pinned here so an FLTK upgrade that changes the behaviour shows up
+         * as a test failure rather than as a guard that silently does nothing
+         * (or, worse, now suppresses a real edit). */
+        {
+            Fl_Text_Buffer b;
+            b.text("alpha\nbeta\ngamma\n");
+            int len = b.length();
+            b.add_modify_callback(modSpy, 0);
+
+            /* a no-op set still fires -- hence the "only when it changed" half
+             * of the guard */
+            memset(&gMod, 0, sizeof(gMod));
+            b.tab_distance(b.tab_distance());
+            CHECK(gMod.calls == 1);
+
+            memset(&gMod, 0, sizeof(gMod));
+            CHECK(b.tab_distance() != 3);
+            b.tab_distance(3);
+            CHECK(gMod.calls   == 1);
+            CHECK(gMod.pos     == 0);
+            CHECK(gMod.nIns    == len);     /* "all of it was inserted" ... */
+            CHECK(gMod.nDel    == len);     /* ... and all of it deleted */
+            CHECK(gMod.hadText == 1);       /* with the whole text as deletedText */
+            /* and the text itself is untouched, which is the whole point */
+            CHECK(b.length() == len);
+            {
+                char *t = b.text();
+                CHECK(t && strcmp(t, "alpha\nbeta\ngamma\n") == 0);
+                free(t);
+            }
+            b.remove_modify_callback(modSpy, 0);
+        }
 
         /* ---- smart Home ---- */
         reset(LEX_LANG_LUA, "    foo()\nbar\n   \n\t\tx\n");
