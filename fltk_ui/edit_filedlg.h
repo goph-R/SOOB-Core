@@ -79,18 +79,21 @@ static void codeFileDlgSetOwner(void *nativeWindowHandle)
 #define CODE_FILTER_WIN32 \
     "Source files\0*.lua;*.pas;*.pp;*.inc;*.dpr;*.lpr;*.md;" \
         "*.c;*.cc;*.cpp;*.cxx;*.h;*.hh;*.hpp;*.hxx;*.java;*.js;*.mjs;*.cjs;*.jsx;" \
-        "*.py;*.pyw;*.css;*.htm;*.html;*.xhtml;*.php;*.phtml;*.sql\0" \
+        "*.py;*.pyw;*.css;*.htm;*.html;*.xhtml;*.php;*.phtml;*.sql;" \
+        "*.sh;*.bash;*.bat;*.cmd\0" \
     "Lua scripts (*.lua)\0*.lua\0" \
     "Pascal (*.pas;*.pp;*.inc;*.dpr)\0*.pas;*.pp;*.inc;*.dpr\0" \
     "Markdown (*.md)\0*.md\0" \
     "PHP (*.php;*.phtml)\0*.php;*.phtml\0" \
     "SQL (*.sql)\0*.sql\0" \
+    "Shell scripts (*.sh;*.bash)\0*.sh;*.bash\0" \
+    "Batch files (*.bat;*.cmd)\0*.bat;*.cmd\0" \
     "All files (*.*)\0*.*\0"
 
 /* FLTK's own chooser uses a different syntax for the same idea. */
 #define CODE_FILTER_FLTK \
     "Source files\t*.{lua,pas,pp,inc,dpr,lpr,md,c,cc,cpp,cxx,h,hh,hpp,hxx,java,js,mjs,cjs,jsx," \
-        "py,pyw,css,htm,html,xhtml,php,phtml,sql}"
+        "py,pyw,css,htm,html,xhtml,php,phtml,sql,sh,bash,bat,cmd}"
 
 #if defined(WIN32) || defined(_WIN32)
 

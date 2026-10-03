@@ -281,7 +281,12 @@ int main(void)
             { lexPhpNames,     LEX_COUNT(lexPhpNames),     1 },
             { lexSqlKeywords,  LEX_COUNT(lexSqlKeywords),  1 },
             { lexSqlTypes,     LEX_COUNT(lexSqlTypes),     1 },
-            { lexSqlBuiltins,  LEX_COUNT(lexSqlBuiltins),  1 }
+            { lexSqlBuiltins,  LEX_COUNT(lexSqlBuiltins),  1 },
+            { lexBashKeywords, LEX_COUNT(lexBashKeywords), 0 },
+            { lexBashBuiltins, LEX_COUNT(lexBashBuiltins), 0 },
+            { lexBatKeywords,  LEX_COUNT(lexBatKeywords),  1 },
+            { lexBatOps,       LEX_COUNT(lexBatOps),       1 },
+            { lexBatBuiltins,  LEX_COUNT(lexBatBuiltins),  1 }
         };
         int t, k;
         for (t = 0; t < (int)(sizeof(tabs) / sizeof(tabs[0])); t++)
@@ -526,6 +531,119 @@ int main(void)
         sb = lexLine(LEX_LANG_PASCAL, LS_PAS_BRACE, line, (int)strlen(line), b);
         CHECK(sb == LS_PAS_BRACE);
         CHECK(b[2] == LEX_CH(LEX_COMMENT));   /* all comment, not a keyword */
+    }
+
+    /* ---------------- bash / sh ---------------- */
+    {
+        const char *src =
+            "#!/bin/sh\n"
+            "# a comment\n"
+            "NAME=\"world\"\n"
+            "count=3\n"
+            "if [ $# -gt 0 ]; then\n"
+            "  echo \"hello ${NAME}\"\n"
+            "  local n=${#NAME}\n"
+            "else\n"
+            "  printf '%s\\n' 'single'\n"
+            "fi\n"
+            "while true; do break; done\n";
+        char sty[1024];
+        lexText(LEX_LANG_BASH, src, sty);
+
+        CHECK(allSlot(src, sty, "# a comment", LEX_COMMENT));
+        CHECK(allSlot(src, sty, "\"world\"", LEX_STRING));
+        CHECK(allSlot(src, sty, "'single'", LEX_STRING));
+        CHECK(slotAt(src, sty, "if ")     == LEX_KEYWORD);
+        CHECK(slotAt(src, sty, "then")    == LEX_KEYWORD);
+        CHECK(slotAt(src, sty, "else")    == LEX_KEYWORD);
+        CHECK(slotAt(src, sty, "fi")      == LEX_KEYWORD);
+        CHECK(slotAt(src, sty, "while")   == LEX_KEYWORD);
+        CHECK(slotAt(src, sty, "local")   == LEX_KEYWORD);
+        CHECK(slotAt(src, sty, "echo")    == LEX_IDENT);
+        CHECK(slotAt(src, sty, "printf")  == LEX_IDENT);
+        CHECK(slotAt(src, sty, "break")   == LEX_IDENT);
+        CHECK(slotAt(src, sty, "3")       == LEX_NUMBER);
+        /* $NAME is a variable; so is the special parameter $# */
+        CHECK(allSlot(src, sty, "$#", LEX_IDENT));
+        /* ...and a '#' that is NOT on a word boundary must not start a
+           comment, or everything after ${#NAME} would go grey */
+        CHECK(allSlot(src, sty, "${#NAME}", LEX_IDENT) == 0);   /* braces are markers */
+        CHECK(slotAt(src, sty, "#NAME}") == LEX_PLAIN);         /* not LEX_COMMENT */
+        CHECK(slotAt(src, sty, "}\n") == LEX_MARKER);           /* line continued */
+        /* a bash script needs no carry state at end of line */
+        CHECK(carryAfterLine(src, sty, 1) == LS_NORMAL);
+        CHECK(carryAfterLine(src, sty, 6) == LS_NORMAL);
+    }
+
+    /* a single-quoted string may span lines in sh */
+    {
+        const char *src = "x='one\ntwo'\necho done\n";
+        char sty[256];
+        lexText(LEX_LANG_BASH, src, sty);
+        CHECK(carryAfterLine(src, sty, 0) == LS_CF_SQ);
+        CHECK(allSlot(src, sty, "two'", LEX_STRING));
+        CHECK(carryAfterLine(src, sty, 1) == LS_NORMAL);
+        CHECK(slotAt(src, sty, "echo") == LEX_IDENT);
+    }
+
+    /* ---------------- Windows batch ---------------- */
+    {
+        const char *src =
+            "@echo off\n"
+            "REM build the thing\n"
+            ":: an alternative comment\n"
+            "setlocal\n"
+            "set NAME=codeedit\n"
+            "if not exist %NAME%.cpp goto nocwd\n"
+            "for %%f in (*.cpp) do echo %%f\n"
+            "if errorlevel 1 goto error\n"
+            "echo \"done\" 1>&2\n"
+            ":nocwd\n"
+            "goto :eof\n";
+        char sty[1024];
+        lexText(LEX_LANG_BAT, src, sty);
+
+        CHECK(slotAt(src, sty, "@")                     == LEX_MARKER);
+        CHECK(allSlot(src, sty, "REM build the thing",  LEX_COMMENT));
+        CHECK(allSlot(src, sty, ":: an alternative comment", LEX_COMMENT));
+        CHECK(slotAt(src, sty, "setlocal")  == LEX_KEYWORD);
+        CHECK(slotAt(src, sty, "set NAME")  == LEX_KEYWORD);
+        CHECK(slotAt(src, sty, "if not")    == LEX_KEYWORD);
+        CHECK(slotAt(src, sty, "not exist") == LEX_KEYWORD);
+        CHECK(slotAt(src, sty, "exist")     == LEX_TYPE);      /* condition */
+        CHECK(slotAt(src, sty, "errorlevel")== LEX_TYPE);
+        CHECK(slotAt(src, sty, "echo off")  == LEX_IDENT);     /* command */
+        CHECK(allSlot(src, sty, "%NAME%",   LEX_IDENT));
+        CHECK(allSlot(src, sty, "%%f",      LEX_IDENT));
+        CHECK(allSlot(src, sty, "\"done\"", LEX_STRING));
+        CHECK(allSlot(src, sty, ":nocwd",   LEX_TYPE));        /* label definition */
+        CHECK(allSlot(src, sty, ":eof",     LEX_TYPE));        /* label reference */
+        CHECK(slotAt(src, sty, "1>&2")      == LEX_NUMBER);
+        /* batch never carries state across a line */
+        CHECK(carryAfterLine(src, sty, 0) == LS_NORMAL);
+        CHECK(carryAfterLine(src, sty, 4) == LS_NORMAL);
+        CHECK(carryAfterLine(src, sty, 8) == LS_NORMAL);
+    }
+
+    /* `rem` must be a whole word, and a drive letter is not a label */
+    {
+        const char *src = "remove /q x\ncopy a C:\\tmp\\b\n";
+        char sty[256];
+        lexText(LEX_LANG_BAT, src, sty);
+        CHECK(slotAt(src, sty, "remove") == LEX_PLAIN);        /* not a comment */
+        CHECK(slotAt(src, sty, "copy")   == LEX_IDENT);
+        CHECK(slotAt(src, sty, ":\\tmp") == LEX_PLAIN);        /* C: is not a label */
+    }
+
+    /* ---------------- extension -> language ---------------- */
+    {
+        CHECK(lexLangFromPath("build.sh")    == LEX_LANG_BASH);
+        CHECK(lexLangFromPath("x.bash")      == LEX_LANG_BASH);
+        CHECK(lexLangFromPath("e98.bat")     == LEX_LANG_BAT);
+        CHECK(lexLangFromPath("x.CMD")       == LEX_LANG_BAT);   /* case-insensitive */
+        CHECK(lexLangFromPath("codeedit.cpp")== LEX_LANG_C);
+        CHECK(lexLangFromPath("notes.md")    == LEX_LANG_MARKDOWN);
+        CHECK(lexLangFromPath("noext")       == LEX_LANG_TEXT);
     }
 
     if (failures) { printf("\n%d FAILURE(S)\n", failures); return 1; }

@@ -68,7 +68,9 @@ enum {
     LEX_LANG_CSS,
     LEX_LANG_HTML,
     LEX_LANG_PHP,        /* HTML host with <?php ?> islands */
-    LEX_LANG_SQL
+    LEX_LANG_SQL,
+    LEX_LANG_BASH,       /* sh / bash shell scripts            */
+    LEX_LANG_BAT         /* Windows batch: cmd and COMMAND.COM */
 };
 
 /* ---- carry state -------------------------------------------------------
@@ -417,6 +419,7 @@ typedef struct LexCf {
     char dollarVar;     /* $name is a variable -> LEX_IDENT                     */
     char multiStr;      /* '...' / "..." may span lines                          */
     char phpClose;      /* "?>" ends the code (outside strings / block comments) */
+    char shell;         /* sh: '#' only on a word boundary, $? $# $1 specials   */
 } LexCf;
 
 static const char *const lexCKeywords[] = {
@@ -468,6 +471,20 @@ static const char *const lexPyBuiltins[] = {
     "self","set","setattr","sorted","str","sum","super","tuple","type","zip"
 };
 
+/* Shell reserved words only -- external commands (grep, sed, ...) are
+   deliberately NOT listed: the set is unbounded and colouring an arbitrary
+   word as a builtin reads worse than leaving it plain. */
+static const char *const lexBashKeywords[] = {
+    "case","do","done","elif","else","esac","fi","for","function","if","in",
+    "local","return","select","then","time","until","while"
+};
+static const char *const lexBashBuiltins[] = {
+    "alias","bash","break","cd","command","continue","declare","echo","eval",
+    "exec","exit","export","false","getopts","hash","kill","let","printf",
+    "pwd","read","readonly","set","shift","shopt","source","test","trap",
+    "true","type","typeset","ulimit","umask","unalias","unset","wait"
+};
+
 static const char *const lexPhpKeywords[] = {
     "abstract","and","array","as","break","callable","case","catch","class",
     "clone","const","continue","declare","default","do","echo","else","elseif",
@@ -505,13 +522,17 @@ static const char *const lexSqlBuiltins[] = {
 
 #define LEX_TAB(t) t, LEX_COUNT(t)
 /*                               keywords                  types                  builtins                 line blk pre tpl 3q @  Aa css fold $ mstr ?> */
-static const LexCf lexCfC    = { LEX_TAB(lexCKeywords),    LEX_TAB(lexCTypes),    0, 0,                     '/', 1, 1, 0, 0, 0, 0, 0,  0,  0, 0,   0 };
-static const LexCf lexCfJava = { LEX_TAB(lexJavaKeywords), LEX_TAB(lexJavaTypes), 0, 0,                     '/', 1, 0, 0, 0, 1, 1, 0,  0,  0, 0,   0 };
-static const LexCf lexCfJs   = { LEX_TAB(lexJsKeywords),   0, 0,                  LEX_TAB(lexJsBuiltins),   '/', 1, 0, 1, 0, 1, 1, 0,  0,  0, 0,   0 };
-static const LexCf lexCfPy   = { LEX_TAB(lexPyKeywords),   0, 0,                  LEX_TAB(lexPyBuiltins),   '#', 0, 0, 0, 1, 1, 1, 0,  0,  0, 0,   0 };
-static const LexCf lexCfCss  = { 0, 0,                     0, 0,                  0, 0,                     0,   1, 0, 0, 0, 1, 0, 1,  1,  0, 0,   0 };
-static const LexCf lexCfSql  = { LEX_TAB(lexSqlKeywords),  LEX_TAB(lexSqlTypes),  LEX_TAB(lexSqlBuiltins), '-', 1, 0, 0, 0, 0, 0, 0,  1,  0, 1,   0 };
-static const LexCf lexCfPhp  = { LEX_TAB(lexPhpKeywords),  LEX_TAB(lexPhpTypes),  0, 0,                     'b', 1, 0, 0, 0, 0, 1, 0,  1,  1, 1,   1 };
+static const LexCf lexCfC    = { LEX_TAB(lexCKeywords),    LEX_TAB(lexCTypes),    0, 0,                     '/', 1, 1, 0, 0, 0, 0, 0,  0,  0, 0,   0, 0 };
+static const LexCf lexCfJava = { LEX_TAB(lexJavaKeywords), LEX_TAB(lexJavaTypes), 0, 0,                     '/', 1, 0, 0, 0, 1, 1, 0,  0,  0, 0,   0, 0 };
+static const LexCf lexCfJs   = { LEX_TAB(lexJsKeywords),   0, 0,                  LEX_TAB(lexJsBuiltins),   '/', 1, 0, 1, 0, 1, 1, 0,  0,  0, 0,   0, 0 };
+static const LexCf lexCfPy   = { LEX_TAB(lexPyKeywords),   0, 0,                  LEX_TAB(lexPyBuiltins),   '#', 0, 0, 0, 1, 1, 1, 0,  0,  0, 0,   0, 0 };
+static const LexCf lexCfCss  = { 0, 0,                     0, 0,                  0, 0,                     0,   1, 0, 0, 0, 1, 0, 1,  1,  0, 0,   0, 0 };
+static const LexCf lexCfSql  = { LEX_TAB(lexSqlKeywords),  LEX_TAB(lexSqlTypes),  LEX_TAB(lexSqlBuiltins), '-', 1, 0, 0, 0, 0, 0, 0,  1,  0, 1,   0, 0 };
+/* bash: '#' comments, $vars, quotes that may span lines, case-sensitive.
+   No block comment and no backtick: `...` in sh is command substitution,
+   i.e. CODE, and painting it as a string would be actively misleading. */
+static const LexCf lexCfBash = { LEX_TAB(lexBashKeywords), 0, 0,                  LEX_TAB(lexBashBuiltins), '#', 0, 0, 0, 0, 0, 0, 0,  0,  1, 1,   0, 1 };
+static const LexCf lexCfPhp  = { LEX_TAB(lexPhpKeywords),  LEX_TAB(lexPhpTypes),  0, 0,                     'b', 1, 0, 0, 0, 0, 1, 0,  1,  1, 1,   1, 0 };
 
 static int lexIsCssIdent(int c) { return lexIsAlnum(c) || c == '-'; }
 
@@ -621,7 +642,11 @@ static int lexCfLineEx(const LexCf *L, int st, const char *s, int n, char *out, 
         if (((L->lineComment == '/' || L->lineComment == 'b') &&
              c == '/' && i + 1 < n && s[i + 1] == '/') ||
             ((L->lineComment == '#' || L->lineComment == 'b') && c == '#' &&
-             !(L->phpClose && i + 1 < n && s[i + 1] == '[')) ||      /* PHP 8 #[Attr] */
+             !(L->phpClose && i + 1 < n && s[i + 1] == '[') &&       /* PHP 8 #[Attr] */
+             /* In sh a '#' only opens a comment at the start of a word, so
+                ${#arr} and $# keep their meaning instead of commenting out
+                the rest of the line. */
+             !(L->shell && i > 0 && s[i - 1] != ' ' && s[i - 1] != '\t')) ||
             (L->lineComment == '-' && c == '-' && i + 1 < n && s[i + 1] == '-')) {
             /* PHP: a "?>" ends even a line comment */
             int e = L->phpClose ? lexFindPhpClose(s, i, n) : n;
@@ -726,6 +751,16 @@ static int lexCfLineEx(const LexCf *L, int st, const char *s, int n, char *out, 
                 }
                 break;
             }
+            continue;
+        }
+
+        /* -- sh special parameters: $? $! $$ $# $* $@ $- $0..$9 --
+         * Two characters exactly; $10 is $1 followed by a literal 0, which
+         * is what sh itself does. */
+        if (L->shell && c == '$' && i + 1 < n &&
+            strchr("?!$#*@-0123456789", s[i + 1])) {
+            out[i++] = LEX_CH(LEX_IDENT);
+            out[i++] = LEX_CH(LEX_IDENT);
             continue;
         }
 
@@ -968,6 +1003,142 @@ static const char *const lexHtmlNames[] = { "htm","html","xhtml" };
 static const char *const lexPhpNames[]  = { "php","phtml" };
 static const char *const lexSqlNames[]  = { "sql" };
 
+/* ---- Windows batch ------------------------------------------------------
+ * Not expressible as a LexCf: the comment introducers are a WORD (`rem`) and
+ * a label (`::`) rather than a punctuation character, variables are %VAR% /
+ * !VAR! rather than $name, and `:label` defines a jump target. Everything is
+ * case-insensitive, so the tables are lowercase and matched with fold=1.
+ *
+ * No carry state is needed and none is returned: cmd has no block comment,
+ * and a "..." string cannot span lines.
+ */
+static const char *const lexBatKeywords[] = {
+    "call","do","else","endlocal","exit","for","goto","if","in","not","set",
+    "setlocal","shift"
+};
+/* `if` conditions and comparison operators -- their own colour because they
+   read as operators, not commands. */
+static const char *const lexBatOps[] = {
+    "defined","equ","errorlevel","exist","geq","gtr","leq","lss","neq"
+};
+static const char *const lexBatBuiltins[] = {
+    "cd","chdir","cls","copy","date","del","dir","echo","erase","find",
+    "findstr","md","mkdir","more","move","path","pause","popd","prompt",
+    "pushd","rd","ren","rename","rmdir","sort","start","time","title","type",
+    "ver","verify","vol","xcopy"
+};
+
+/* Case-insensitive match of the word `w` at s[i], as a whole word. */
+static int lexBatWordIs(const char *s, int i, int n, const char *w)
+{
+    int k = 0;
+    while (w[k]) {
+        if (i + k >= n || lexLower((unsigned char)s[i + k]) != w[k]) return 0;
+        k++;
+    }
+    return (i + k >= n) || !lexIsAlnum((unsigned char)s[i + k]);
+}
+
+static int lexBatLine(int st, const char *s, int n, char *out)
+{
+    int i = 0, b;
+    (void)st;
+
+    /* Leading blanks, then an optional '@' (suppresses echo of this line). */
+    while (i < n && (s[i] == ' ' || s[i] == '\t')) out[i++] = LEX_CH(LEX_PLAIN);
+    if (i < n && s[i] == '@') out[i++] = LEX_CH(LEX_MARKER);
+    while (i < n && (s[i] == ' ' || s[i] == '\t')) out[i++] = LEX_CH(LEX_PLAIN);
+
+    /* Whole-line comments: `rem ...` and the `::` label-as-comment idiom. */
+    if (i + 1 < n && s[i] == ':' && s[i + 1] == ':') {
+        lexFill(out, i, n, LEX_COMMENT);
+        return LS_NORMAL;
+    }
+    if (lexBatWordIs(s, i, n, "rem")) {
+        lexFill(out, i, n, LEX_COMMENT);
+        return LS_NORMAL;
+    }
+
+    /* A `:label` definition at the start of the line. */
+    if (i + 1 < n && s[i] == ':' && lexIsAlpha((unsigned char)s[i + 1])) {
+        b = i++;
+        while (i < n && lexIsAlnum((unsigned char)s[i])) i++;
+        lexFill(out, b, i, LEX_TYPE);
+    }
+
+    while (i < n) {
+        unsigned char c = (unsigned char)s[i];
+
+        /* %VAR%, %1..%9, and %%i inside a for loop. */
+        if (c == '%') {
+            b = i++;
+            if (i < n && s[i] == '%') i++;                  /* %%i */
+            if (i < n && lexIsDigit((unsigned char)s[i])) {
+                i++;                                        /* %1 .. %9 */
+            } else {
+                while (i < n && s[i] != '%' && s[i] != ' ' && s[i] != '\t') i++;
+                if (i < n && s[i] == '%') i++;              /* closing % */
+            }
+            lexFill(out, b, i, LEX_IDENT);
+            continue;
+        }
+
+        /* !VAR! -- delayed expansion, under `setlocal enabledelayedexpansion`. */
+        if (c == '!' && i + 1 < n && lexIsAlpha((unsigned char)s[i + 1])) {
+            b = i++;
+            while (i < n && s[i] != '!') i++;
+            if (i < n) i++;
+            lexFill(out, b, i, LEX_IDENT);
+            continue;
+        }
+
+        /* "quoted" -- cmd has no escape character inside quotes. */
+        if (c == '"') {
+            b = i++;
+            while (i < n && s[i] != '"') i++;
+            if (i < n) i++;
+            lexFill(out, b, i, LEX_STRING);
+            continue;
+        }
+
+        /* A label REFERENCE, e.g. `goto :eof`. Only after whitespace, so a
+           drive letter (C:\) and a plain `a:b` are left alone. */
+        if (c == ':' && i > 0 && (s[i - 1] == ' ' || s[i - 1] == '\t') &&
+            i + 1 < n && lexIsAlpha((unsigned char)s[i + 1])) {
+            b = i++;
+            while (i < n && lexIsAlnum((unsigned char)s[i])) i++;
+            lexFill(out, b, i, LEX_TYPE);
+            continue;
+        }
+
+        if (lexIsDigit(c)) {
+            b = i;
+            while (i < n && (lexIsAlnum((unsigned char)s[i]) || s[i] == '.')) i++;
+            lexFill(out, b, i, LEX_NUMBER);
+            continue;
+        }
+
+        if (lexIsAlpha(c)) {
+            int len, slot = LEX_PLAIN;
+            b = i;
+            while (i < n && lexIsAlnum((unsigned char)s[i])) i++;
+            len = i - b;
+            if      (lexInTable(lexBatKeywords, LEX_COUNT(lexBatKeywords), s + b, len, 1))
+                slot = LEX_KEYWORD;
+            else if (lexInTable(lexBatOps,      LEX_COUNT(lexBatOps),      s + b, len, 1))
+                slot = LEX_TYPE;
+            else if (lexInTable(lexBatBuiltins, LEX_COUNT(lexBatBuiltins), s + b, len, 1))
+                slot = LEX_IDENT;
+            lexFill(out, b, i, slot);
+            continue;
+        }
+
+        if (c && strchr("=+<>|&()^,;*?/.-", (char)c)) { out[i++] = LEX_CH(LEX_MARKER); continue; }
+        out[i++] = LEX_CH(LEX_PLAIN);
+    }
+    return LS_NORMAL;
+}
+
 /* Fence sub-language index <-> LEX_LANG_*. Index 0 = untagged / unknown. */
 static const int lexMdSubLang[LEX_MD_NSUB] = {
     LEX_LANG_TEXT, LEX_LANG_PASCAL, LEX_LANG_LUA, LEX_LANG_C, LEX_LANG_JAVA,
@@ -1187,6 +1358,8 @@ static int lexLineRaw(int lang, int st, const char *s, int n, char *out)
     case LEX_LANG_HTML:     return lexHtmlLine(st, s, n, out);
     case LEX_LANG_PHP:      return lexHtmlLineEx(st, s, n, out, 1);
     case LEX_LANG_SQL:      return lexCfLine(&lexCfSql, st, s, n, out);
+    case LEX_LANG_BASH:     return lexCfLine(&lexCfBash, st, s, n, out);
+    case LEX_LANG_BAT:      return lexBatLine(st, s, n, out);
     default:                lexFill(out, 0, n, LEX_PLAIN); return LS_NORMAL;
     }
 }
@@ -1222,6 +1395,20 @@ static int lexLangFromPath(const char *path)
         static const char *const pasExt[] = { "dpr", "inc", "lpr", "pp" };
         if (lexInTable(pasExt, LEX_COUNT(pasExt), d, (int)strlen(d), 1))
             return LEX_LANG_PASCAL;
+    }
+    /* Shell and batch: own tables rather than fence aliases. Adding them to
+     * lexMdFenceSub would push LEX_MD_NSUB to 13, and the fence carry states
+     * (LS_MD_FENCE + tilde*NSUB + sub) would then run to 44 and collide with
+     * LS_CF_BLOCK -- see the carry-state comment at the top. */
+    {
+        static const char *const shExt[] = { "bash", "sh" };
+        if (lexInTable(shExt, LEX_COUNT(shExt), d, (int)strlen(d), 1))
+            return LEX_LANG_BASH;
+    }
+    {
+        static const char *const batExt[] = { "bat", "cmd" };
+        if (lexInTable(batExt, LEX_COUNT(batExt), d, (int)strlen(d), 1))
+            return LEX_LANG_BAT;
     }
     /* The other languages share one name table for extensions and fence tags. */
     {
