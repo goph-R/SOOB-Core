@@ -6,3 +6,34 @@
 
 # Shell scripts -- always LF.
 *.sh       text eol=lf
+
+# C / C++ sources, Lua and docs: CRLF in the working tree. Win98 and DOS are
+# the supported editing environment -- Notepad, Dev-C++ and SOOB-Code itself
+# all write CRLF -- so that is what these files should BE on disk. Git still
+# stores them with LF, which is what keeps a file saved on 98 from showing up
+# as a whole-file diff; before this, three headers had drifted to CRLF in the
+# working tree and every line of them read as changed.
+*.c        text eol=crlf
+*.cc       text eol=crlf
+*.cpp      text eol=crlf
+*.cxx      text eol=crlf
+*.h        text eol=crlf
+*.hh       text eol=crlf
+*.hpp      text eol=crlf
+*.hxx      text eol=crlf
+*.lua      text eol=crlf
+*.md       text eol=crlf
+*.ini      text eol=crlf
+
+# Vendored code is left exactly as upstream ships it (see CLAUDE.md), so the
+# rules above must not reach into it. These re-state the attributes vendor/
+# had BEFORE them -- no conversion, except the .bat/.cmd files upstream ships,
+# which were already pinned and whose blobs are already normalised. Changing
+# that to -text would make git store their CRLF verbatim and rewrite them.
+# Must stay LAST -- later rules win.
+vendor/**               -text -eol
+vendor/**/*.bat         text eol=crlf
+vendor/**/*.cmd         text eol=crlf
+vendor_win10/**         -text -eol
+vendor_win10/**/*.bat   text eol=crlf
+vendor_win10/**/*.cmd   text eol=crlf
