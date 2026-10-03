@@ -684,7 +684,15 @@ public:
         }
         matchDraw();
         caretDraw();
-        if (mWrapCol <= 0) return;
+
+        /* The column ruler marks where wrapping happens, so it is drawn only
+         * while wrapping actually happens there. mWrapCol alone is not the
+         * condition: switching Word Wrap off leaves the column at its last
+         * value, which used to leave the dotted line behind in the view.
+         * Read from mContinuousWrap rather than our own mWrapOn so it cannot
+         * disagree with the state the display is really in. WRAP_AT_BOUNDS
+         * (mWrapCol == 0) wraps to the window edge and has no column to mark. */
+        if (!mContinuousWrap || mWrapCol <= 0) return;
 
         x = text_area.x + wrapPixels() - mHorizOffset;
         if (x < text_area.x || x >= text_area.x + text_area.w) return;
