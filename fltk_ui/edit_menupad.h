@@ -174,16 +174,24 @@ static void editMenuTitleDraw(const Fl_Label *o, int X, int Y, int W, int H,
     Fl_Window *win = Fl_Window::current();
     if (win && win->menu_window()) {
         /* The pressed title. The window IS the item, so its own size is the
-           border rect -- no need to undo the label's insets. */
+           border rect -- no need to undo the label's insets.
+
+           Held off the band's two rules by a row top and bottom: the title
+           window is inset 1px into the bar, which would otherwise put this
+           border immediately against them with no face colour between. The
+           margin rows are filled, not skipped, because FLTK has already
+           flooded the window with selection_color(). Nothing is inset
+           horizontally -- the band is ruled along the top and bottom only,
+           so there is nothing to clear at the sides. */
         int w = win->w(), h = win->h();
         fl_color(FL_BACKGROUND_COLOR);
         fl_rectf(0, 0, w, h);                    /* over FLTK's blue fill */
         fl_color(FL_DARK3);
-        fl_xyline(0, 0, w - 1);                  /* shadow: top, left     */
-        fl_yxline(0, 0, h - 1);
+        fl_xyline(0, 1, w - 1);                  /* shadow: top, left     */
+        fl_yxline(0, 1, h - 2);
         fl_color(FL_WHITE);
-        fl_xyline(0, h - 1, w - 1);              /* highlight: bottom, right */
-        fl_yxline(w - 1, 0, h - 1);
+        fl_xyline(0, h - 2, w - 1);              /* highlight: bottom, right */
+        fl_yxline(w - 1, 1, h - 2);
     }
     fl_font(o->font, o->size);
     fl_color(FL_FOREGROUND_COLOR);
