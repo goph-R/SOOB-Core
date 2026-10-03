@@ -3,8 +3,14 @@
  * re-highlighter in edit_code.h.  Uses Fl_Text_Buffer (pure model, never opens
  * a display) but constructs no widget, so it runs with no X server.
  *
- *   g++ fltk_ui/edit_code_model_test.cpp -o /tmp/ecmtest \
- *       $(fltk-config --cxxflags) -I. -Ifltk_ui $(fltk-config --ldflags)
+ *   tools/test_linux.sh
+ *
+ * Do NOT reach for the system fltk-config: edit_code.h refers to
+ * fl_text_display_longest_line, which is one of our patches to
+ * vendor/fltk-1.3 and is not in upstream FLTK, so an stock-FLTK build fails
+ * to compile. test_linux.sh builds the patched library for Linux (on a copy,
+ * outside the repo -- configure would overwrite the tracked Windows
+ * config.h / abi-version.h) and links against that.
  *
  * THE INVARIANT
  *
@@ -26,6 +32,7 @@
 #include "edit_code.h"
 #include "edit_find.h"
 #include "edit_match.h"
+#include "edit_indent.h"
 
 static int failures = 0;
 #define CHECK(c) do { if (!(c)) { \
@@ -569,6 +576,152 @@ int main(void)
         }
         #undef atNth
         #undef AT
+
+        /* ---------------- indentation model (edit_indent.h) ----------------
+         * Every rule here is otherwise only observable by typing on the
+         * target machine, which is exactly why it lives in buffer-only
+         * functions. */
+
+        /* ---- smart Home ---- */
+        reset(LEX_LANG_LUA, "    foo()\nbar\n   \n\t\tx\n");
+        CHECK(codeHomeTarget(T, 0) == 4);     /* column 0 -> first non-blank */
+        CHECK(codeHomeTarget(T, 4) == 0);     /* on the text -> column 0 */
+        CHECK(codeHomeTarget(T, 7) == 4);     /* inside the text -> non-blank */
+        CHECK(codeHomeTarget(T, 2) == 4);     /* inside the indent -> non-blank */
+        {
+            int l2 = posOf("bar");            /* no indent: both land on ls */
+            CHECK(codeHomeTarget(T, l2) == l2);
+            CHECK(codeHomeTarget(T, l2 + 2) == l2);
+            /* an all-whitespace line has no first non-blank: plain Home */
+            CHECK(codeHomeTarget(T, 16) == 14);
+            CHECK(codeHomeTarget(T, 14) == 14);
+            /* tabs count as indent like spaces */
+            CHECK(codeHomeTarget(T, 18) == 20);
+            CHECK(codeHomeTarget(T, 20) == 18);
+        }
+
+        /* ---- Enter: which lines open a block ---- */
+        #define OPENS(needle) \
+            codeOpensBlock(T, S, LANG, T->line_end(posOf(needle)))
+        reset(LEX_LANG_LUA,
+              "local t = {\n"
+              "local u = (\n"
+              "local v = [\n"
+              "if x then\n"
+              "for i = 1, 10 do\n"
+              "function f(a, b)\n"
+              "repeat\n"
+              "else\n"
+              "elseif y then\n"
+              "if x then return end\n"
+              "while ok do end\n"
+              "do -- end\n"
+              "-- trailing {\n"
+              "-- if x then\n"
+              "local w = 1\n");
+        CHECK(OPENS("local t =") == 1);           /* { */
+        CHECK(OPENS("local u =") == 1);           /* ( */
+        CHECK(OPENS("local v =") == 1);           /* [ */
+        CHECK(OPENS("if x then\n") == 1);
+        CHECK(OPENS("for i") == 1);               /* ... do */
+        CHECK(OPENS("function f") == 1);          /* line ENDS with ')' */
+        CHECK(OPENS("repeat") == 1);
+        CHECK(OPENS("else\n") == 1);              /* mid word on its own */
+        CHECK(OPENS("elseif") == 1);              /* ... then */
+        CHECK(OPENS("if x then return end") == 0);  /* balances to zero */
+        CHECK(OPENS("while ok do end") == 0);       /* likewise */
+        CHECK(OPENS("do -- end") == 1);           /* the `end` is a comment */
+        CHECK(OPENS("-- trailing {") == 0);       /* the `{` is a comment */
+        CHECK(OPENS("-- if x then") == 0);        /* the `then` is a comment */
+        CHECK(OPENS("local w = 1") == 0);
+        /* a brace language has no block words, only brackets */
+        reset(LEX_LANG_C, "if (x) {\nint a = 1;\nvoid f()\n");
+        CHECK(OPENS("if (x)") == 1);
+        CHECK(OPENS("int a") == 0);
+        CHECK(OPENS("void f()") == 0);            /* no `function` keyword */
+        #undef OPENS
+
+        /* ---- closing brackets on an otherwise-blank line ---- */
+        reset(LEX_LANG_C, "void f()\n{\n    if (x) {\n        g();\n        ");
+        CHECK(codeCloseBracketOpener(T, S, T->length(), '}') == posOf("    if (x)"));
+        reset(LEX_LANG_LUA, "foo(\n    1,\n    ");
+        CHECK(codeCloseBracketOpener(T, S, T->length(), ')') == 0);
+        reset(LEX_LANG_LUA, "local t = {\n    1,\n        ");
+        CHECK(codeCloseBracketOpener(T, S, T->length(), '}') == 0);
+        reset(LEX_LANG_C, "int a[] = {\n    1,\n  ");
+        CHECK(codeCloseBracketOpener(T, S, T->length(), ']') == -1);  /* no '[' alone */
+        /* the line must be blank -- this is what keeps ')' from firing on a
+         * half-finished expression */
+        reset(LEX_LANG_C, "if (x) {\n    g()");
+        CHECK(codeCloseBracketOpener(T, S, T->length(), '}') == -1);
+        /* a bracket in a comment is not an opener */
+        reset(LEX_LANG_C, "/* { */\nint a;\n");
+        CHECK(codeCloseBracketOpener(T, S, T->length(), '}') == -1);
+
+        /* ---- closing WORDS, answered before the last character is typed --- */
+        reset(LEX_LANG_LUA, "function f()\n    if x then\n        g()\n    en");
+        CHECK(codeCloseWordOpener(T, S, LANG, T->length(), 'd') == posOf("    if x then"));
+        /* the next `end` closes the function, stepping over the inner block */
+        reset(LEX_LANG_LUA, "function f()\n    if x then\n        g()\n    end\nen");
+        CHECK(codeCloseWordOpener(T, S, LANG, T->length(), 'd') == 0);
+        /* ... and over an `else`, which is depth-neutral */
+        reset(LEX_LANG_LUA, "if x then\n    g()\nelse\n    h()\nen");
+        CHECK(codeCloseWordOpener(T, S, LANG, T->length(), 'd') == 0);
+        reset(LEX_LANG_LUA, "repeat\n    g()\n    unti");
+        CHECK(codeCloseWordOpener(T, S, LANG, T->length(), 'l') == 0);
+        reset(LEX_LANG_LUA, "if x then\n    g()\n    els");
+        CHECK(codeCloseWordOpener(T, S, LANG, T->length(), 'e') == 0);
+        reset(LEX_LANG_LUA, "if x then\n    g()\n    elsei");
+        CHECK(codeCloseWordOpener(T, S, LANG, T->length(), 'f') == 0);
+        /* not a closing word */
+        reset(LEX_LANG_LUA, "if x then\n    retur");
+        CHECK(codeCloseWordOpener(T, S, LANG, T->length(), 'n') == -1);
+        /* `append` must not read as `end` */
+        reset(LEX_LANG_LUA, "if x then\n    appen");
+        CHECK(codeCloseWordOpener(T, S, LANG, T->length(), 'd') == -1);
+        /* something else on the line: leave the user's layout alone */
+        reset(LEX_LANG_LUA, "if x then\n    g() en");
+        CHECK(codeCloseWordOpener(T, S, LANG, T->length(), 'd') == -1);
+        /* caret must be at the end of the line */
+        reset(LEX_LANG_LUA, "if x then\n    en  ");
+        CHECK(codeCloseWordOpener(T, S, LANG, T->length() - 2, 'd') == -1);
+        /* the opener may not come from a comment */
+        reset(LEX_LANG_LUA, "-- if x then\nen");
+        CHECK(codeCloseWordOpener(T, S, LANG, T->length(), 'd') == -1);
+        /* brace languages have no block words */
+        reset(LEX_LANG_C, "if (x) {\n    en");
+        CHECK(codeCloseWordOpener(T, S, LEX_LANG_C, T->length(), 'd') == -1);
+
+        /* ---- paste re-indent (pure string work) ---- */
+        {
+            #define PASTE(src, ind, want) do {                                \
+                char *g = codeReindentPaste((src), (ind));                    \
+                const char *w = (want);                                       \
+                if (!w) CHECK(g == 0);                                        \
+                else {                                                        \
+                    CHECK(g != 0 && strcmp(g, w) == 0);                        \
+                    if (g && strcmp(g, w))                                    \
+                        printf("   got \"%s\"\n  want \"%s\"\n", g, w);        \
+                }                                                             \
+                free(g);                                                      \
+            } while (0)
+
+            PASTE("foo()", "    ", 0);          /* single line: untouched */
+            PASTE("a\nb", "", 0);               /* nothing to add or strip */
+            /* the block's own common indent is replaced, inner shape kept */
+            PASTE("    a\n        b\n    c\n", "\t", "a\n\t    b\n\tc\n");
+            /* line 1 is stripped but NOT prefixed: the indent is already in
+               the buffer ahead of the caret */
+            PASTE("if x then\n  g()\nend", "    ",
+                  "if x then\n      g()\n    end");
+            /* blank lines stay empty rather than collecting trailing blanks */
+            PASTE("a\n\nb", "  ", "a\n\n  b");
+            /* a blank line must not drag the common indent down to zero */
+            PASTE("    a\n\n    b", "  ", "a\n\n  b");
+            PASTE("a\nb\n", "  ", "a\n  b\n");
+            #undef PASTE
+        }
+
         delete T;
         delete S;
     }

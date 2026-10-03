@@ -51,6 +51,13 @@
 #include "edit_lex.h"
 #include "edit_fileio.h"
 #include "edit_match.h"
+#include "edit_indent.h"
+
+/* Selection extension for a keyboard move, exactly as Fl_Text_Editor.cxx
+ * reaches for it (it declares the same extern at file scope): a non-static
+ * friend of Fl_Text_Display that re-selects from dragPos to the new caret.
+ * Used by smartHome() so Shift+Home needs no reimplementation. */
+extern void fl_text_drag_me(int pos, Fl_Text_Display *d);
 
 /* ---- crash-localising trace -------------------------------------------
  * Appends and CLOSES on every call, so a hard crash on the target still leaves
@@ -825,17 +832,40 @@ public:
                     if (st & FL_SHIFT) shiftLines(-1); else indentTab();
                     caretRestart(); return 1;
                 }
+                /* Smart Home. A no-op target means we would land exactly
+                 * where FLTK's own kf_move(FL_Home) does, so let it run. */
+                if (k == FL_Home && smartHome(st & FL_SHIFT)) {
+                    caretRestart(); return 1;
+                }
             }
             /* By the character, not the key: '}' is AltGr+B on a Hungarian
-             * layout, which Windows reports as Ctrl+Alt. */
-            if (Fl::event_length() == 1 && Fl::event_text()[0] == '}' &&
-                closeBraceIndent()) {
-                r = Fl_Text_Editor::handle(e);      /* types the brace */
-                endUndoGroup();
-                caretRestart();
-                return r;
+             * layout, which Windows reports as Ctrl+Alt. Both paths re-indent
+             * FIRST and leave the undo group open, so the re-indent and the
+             * character the user typed undo together. */
+            if (Fl::event_length() == 1) {
+                char tc = Fl::event_text()[0];
+                if ((tc == '}' || tc == ']' || tc == ')') &&
+                    closeBracketIndent(tc)) {
+                    r = Fl_Text_Editor::handle(e);      /* types the bracket */
+                    endUndoGroup();
+                    caretRestart();
+                    return r;
+                }
+                /* `end` / `until` / `else` / `elseif` are words, so the test
+                 * is "does this character complete one" -- cheap, and only
+                 * letters can. */
+                if (codeIndWordCh(tc) && closeWordIndent(tc)) {
+                    r = Fl_Text_Editor::handle(e);      /* types the letter */
+                    endUndoGroup();
+                    caretRestart();
+                    return r;
+                }
             }
         }
+        /* Clipboard and drag-drop both arrive here (Fl_Text_Editor routes
+         * FL_DND_RELEASE into FL_PASTE), and a multi-line block wants the
+         * indent of where it is going, not where it came from. */
+        if (e == FL_PASTE && pasteReindent()) { caretRestart(); return 1; }
         r = Fl_Text_Editor::handle(e);
         switch (e) {
         case FL_FOCUS: case FL_KEYBOARD: case FL_PUSH: case FL_DRAG:
@@ -849,26 +879,34 @@ public:
     }
 
     /* ---- indentation -----------------------------------------------------
-     * Enter keeps the current line's indent, plus one level after a line
-     * ending in '{'. Tab inserts spaces to the next indent stop; with a
-     * selection spanning lines, Tab / Shift+Tab indent / outdent every line.
-     * Typing '}' on an otherwise blank line re-indents it to the line holding
-     * the matching '{'. Braces inside comments and strings (per the style
-     * buffer) are ignored -- which also keeps Pascal's { comments } inert.
-     * Every edit is one undo group. */
+     * The DECISIONS all live in edit_indent.h as buffer-only functions, so
+     * they are unit-tested in edit_code_model_test.cpp rather than by typing
+     * on a Pentium II; what is left here is the editing.
+     *
+     *   Enter      keeps the line's indent, plus one level if the line opens
+     *              a block -- a trailing ( [ { in any language, or this
+     *              language's block words (Lua: a net-positive
+     *              function / then / do / repeat, or a trailing else).
+     *   Tab        spaces to the next indent stop; with a selection spanning
+     *              lines, Tab / Shift+Tab indent / outdent every line.
+     *   } ] )      typed alone on a line, re-indents it to the line holding
+     *              the matching opener.
+     *   end until  the same, for Lua's closing words, plus else / elseif,
+     *   else       which line up with the enclosing `if`.
+     *   Home       first non-blank, then column 0.
+     *   paste      a multi-line block is re-indented to where it is going.
+     *
+     * Tokens inside comments and strings are ignored throughout (via the
+     * style buffer), which is also what keeps Pascal's { comments } inert.
+     * Every edit is one undo group -- the re-indent and the character that
+     * triggered it included. */
     char ch(int p) const
     {
         return (p >= 0 && p < mTextBuf->length()) ? mTextBuf->byte_at(p) : 0;
     }
-    int inCommentOrString(int p) const
-    {
-        int slot = mStyleBuf->byte_at(p) - 'A';
-        return slot == LEX_COMMENT || slot == LEX_STRING || slot == LEX_DIRECTIVE;
-    }
     int indentEnd(int ls) const       /* first non-blank at/after line start */
     {
-        while (ch(ls) == ' ' || ch(ls) == '\t') ls++;
-        return ls;
+        return codeIndentEnd(mTextBuf, ls);
     }
     void killSelection()
     {
@@ -887,7 +925,7 @@ public:
 
     void indentNewline()
     {
-        int pos, ls, we, p, open;
+        int pos, ls, we, open;
         char *ind, pad[64];
         beginUndoGroup();
         killSelection();
@@ -895,9 +933,9 @@ public:
         ls  = mTextBuf->line_start(pos);
         we  = indentEnd(ls);
         if (we > pos) we = pos;           /* Enter inside the indent keeps what is left of it */
-        p = pos;
-        while (p > ls && (ch(p - 1) == ' ' || ch(p - 1) == '\t')) p--;
-        open = p > ls && ch(p - 1) == '{' && !inCommentOrString(p - 1);
+        /* Brackets ( [ { in any language, plus the block words of this one --
+         * see edit_indent.h. */
+        open = codeOpensBlock(mTextBuf, mStyleBuf, mLang, pos);
         ind = mTextBuf->text_range(ls, we);
         insert("\n");
         insert(ind);
@@ -905,6 +943,47 @@ public:
         if (open) { if (codeUseTabs) insert("\t"); else { spaces(pad, codeIndent); insert(pad); } }
         endUndoGroup();
         show_insert_position();
+    }
+
+    /* Home: to the first non-blank, or to column 0 if already there.
+     * Returns 0 when the target is where we already are, so handle() can let
+     * FLTK's own binding run instead and nothing changes for a line with no
+     * indent.
+     *
+     * The anchor protocol for Shift is FLTK's: kf_move() sets dragPos only
+     * when there was no selection, unselects, moves, and then
+     * fl_text_drag_me() re-selects. dragType is forced to DRAG_CHAR because
+     * a keyboard selection is always by character -- a preceding middle-click
+     * paste leaves it DRAG_NONE, which would silently select nothing. */
+    int smartHome(int shift)
+    {
+        int pos = insert_position();
+        int t   = codeHomeTarget(mTextBuf, pos);
+        if (t == pos) return 0;
+        if (!mTextBuf->selected()) dragPos = pos;
+        mTextBuf->unselect();
+        insert_position(t);
+        if (shift) { dragType = DRAG_CHAR; fl_text_drag_me(t, this); }
+        show_insert_position();
+        return 1;
+    }
+
+    /* Put `pos` in the middle of the visible lines rather than just barely on
+     * screen -- what you want after a Find, so the match arrives with its
+     * context around it.
+     *
+     * show_insert_position() first, so the position is laid out and
+     * position_to_line() can answer; then shift the top line. In wrap mode
+     * position_to_line() counts DISPLAY lines, which is what scroll() wants,
+     * so this is correct wrapped or not. scroll() clamps its own argument. */
+    void showCentered(int pos)
+    {
+        int ln, want;
+        insert_position(pos);
+        show_insert_position();
+        if (!position_to_line(pos, &ln)) return;
+        want = mNVisibleLines / 2;
+        if (ln != want) scroll(mTopLineNum + (ln - want), mHorizOffset);
     }
 
     void indentTab()
@@ -970,35 +1049,87 @@ public:
         show_insert_position();
     }
 
-    /* '}' about to be typed: if the line is blank, give it the indent of the
-     * line with the matching '{'. Returns 1 with an undo group OPEN (the
-     * caller closes it after the brace is inserted), 0 if nothing changed. */
-    int closeBraceIndent()
+    /* Re-indent the caret's line to `tls`'s indent, replacing [ls,cutEnd).
+     * Returns 1 with an undo group OPEN -- the caller closes it once the
+     * character that triggered this has been inserted, so the two undo as one
+     * step. 0 means nothing needed changing and no group was opened. */
+    int reindentLineTo(int tls, int ls, int cutEnd, int caretAfter)
     {
-        int pos, ls, le, p, depth = 0, target = -1, tls;
         char *ind, *cur;
+        int same, ilen;
+        ind = mTextBuf->text_range(tls, indentEnd(tls));
+        cur = mTextBuf->text_range(ls, cutEnd);
+        same = strcmp(ind, cur) == 0;
+        ilen = (int)strlen(ind);
+        if (same) { free(ind); free(cur); return 0; }
+        beginUndoGroup();
+        mTextBuf->replace(ls, cutEnd, ind);
+        insert_position(caretAfter < 0 ? ls + ilen
+                                       : caretAfter + ilen - (cutEnd - ls));
+        free(ind); free(cur);
+        return 1;
+    }
+
+    /* '}' ']' ')' about to be typed on an otherwise-blank line: give the line
+     * the indent of the line holding the matching opener. */
+    int closeBracketIndent(char close)
+    {
+        int pos, ls, tls;
         if (mTextBuf->selected()) return 0;
         pos = insert_position();
+        tls = codeCloseBracketOpener(mTextBuf, mStyleBuf, pos, close);
+        if (tls < 0) return 0;
+        ls = mTextBuf->line_start(pos);
+        return reindentLineTo(tls, ls, mTextBuf->line_end(pos), -1);
+    }
+
+    /* `typed` would complete a closing block word (`end`, `until`, `else`,
+     * `elseif`) alone on its line: line it up with its opener. Only the
+     * leading blank is replaced -- the word itself is still being typed. */
+    int closeWordIndent(char typed)
+    {
+        int pos, ls, ws, tls;
+        if (mTextBuf->selected()) return 0;
+        pos = insert_position();
+        tls = codeCloseWordOpener(mTextBuf, mStyleBuf, mLang, pos, typed);
+        if (tls < 0) return 0;
+        ls = mTextBuf->line_start(pos);
+        ws = indentEnd(ls);
+        return reindentLineTo(tls, ls, ws, pos);
+    }
+
+    /* A multi-line paste lands at the depth it is going to, not the depth it
+     * came from -- but only when the caret sits in the leading blank of its
+     * line. Mid-line, the first pasted line is a continuation of real text
+     * and re-indenting it would be guesswork, so it goes in verbatim (0 =
+     * let Fl_Text_Editor::handle() do its normal insert).
+     *
+     * Overwrite mode is deliberately left to the base class: re-indenting a
+     * block while overstriking has no sensible meaning. */
+    int pasteReindent()
+    {
+        const char *src = Fl::event_text();
+        char *ind, *out;
+        int pos, ls, p;
+
+        if (!src || !*src || !insert_mode()) return 0;
+        if (!strchr(src, '\n')) return 0;
+        pos = insert_position();
         ls  = mTextBuf->line_start(pos);
-        le  = mTextBuf->line_end(pos);
-        for (p = ls; p < le; p++)
+        for (p = ls; p < pos; p++)                 /* caret inside the indent? */
             if (ch(p) != ' ' && ch(p) != '\t') return 0;
-        for (p = ls - 1; p >= 0; p--) {
-            char c = ch(p);
-            if ((c != '{' && c != '}') || inCommentOrString(p)) continue;
-            if (c == '}') depth++;
-            else if (depth == 0) { target = p; break; }
-            else depth--;
-        }
-        if (target < 0) return 0;
-        tls = mTextBuf->line_start(target);
-        ind = mTextBuf->text_range(tls, indentEnd(tls));
-        cur = mTextBuf->text_range(ls, le);
-        if (strcmp(ind, cur) == 0) { free(ind); free(cur); return 0; }
+
+        ind = mTextBuf->text_range(ls, pos);
+        out = codeReindentPaste(src, ind ? ind : "");
+        free(ind);
+        if (!out) return 0;
+
         beginUndoGroup();
-        mTextBuf->replace(ls, le, ind);
-        insert_position(ls + (int)strlen(ind));
-        free(ind); free(cur);
+        killSelection();
+        insert(out);
+        endUndoGroup();
+        free(out);
+        show_insert_position();
         return 1;
     }
 
