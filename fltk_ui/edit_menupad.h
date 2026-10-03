@@ -2,24 +2,60 @@
 #define EDIT_MENUPAD_H
 
 /*
- * edit_menupad.h -- left "icon column" padding for drop-down menu items.
+ * edit_menupad.h -- Office 97 / Word 97 menus for an Fl_Menu_Bar.
  *
- * FLTK 1.3 draws a plain menu item's text flush against the menu's left edge;
- * only toggle/radio items get a column (for their check box). Native Windows
- * menus reserve that column on every item, which reads much calmer.
+ * Drop-down items: FLTK 1.3 draws a plain item's text flush against the
+ * menu's left edge and reserves the icon column only for toggle/radio items.
+ * Word reserves it on every item, rules its separators as an etched line
+ * inset from both edges, and marks a checked item with the same square it
+ * uses for a pressed toolbar button. editMenuPad() puts all three on a menu,
+ * measured off Word 97 itself:
  *
- * editMenuPad() switches every item INSIDE the drop-downs to a custom label
- * type that leaves exactly the toggle items' check-box column empty, so plain
- * and toggle items line up. Menu-bar titles are left alone. Toggle/radio items
- * keep the normal label type -- FLTK already offsets them.
+ *   row          19px for an 11px font -- the text height plus three.
+ *   icon column  a square the height of the row against the left edge, the
+ *                text five pixels past it (25px in from the edge at 19px).
+ *   separator    128-gray over white, inset 3px from each content edge.
+ *   check        a 1px SUNKEN square filled with a white / face
+ *                checkerboard, with the Win95 tick centred on it.
  *
- * Checked items: editMenuCheck() swaps an item to a second label type that
- * also draws a native-style check mark (no box) in that column. Use it on
- * plain items instead of FL_MENU_TOGGLE / FL_MENU_RADIO, whose box/dot look
- * nothing like a Windows menu; the caller owns the on/off state.
+ * ONE LABELTYPE, FOUR STATES
  *
- * Call after the menu is fully built (menu() / add()): items added later keep
- * the default label type.
+ * An item can be checked, ruled (a separator above it), both or neither, so
+ * the four are FL_FREE_LABELTYPE + a two-bit code rather than four draw
+ * functions. Fl_Label carries the labeltype in `type`, so one draw function
+ * reads its own bits back out. editMenuCheck() flips the check bit and
+ * leaves the rule bit alone.
+ *
+ * Call after the menu is fully built (menu() / add()): items added later
+ * keep the default label type. Toggle/radio items are left to FLTK -- use
+ * editMenuCheck() on a plain item instead, whose box and dot look nothing
+ * like a Windows menu; the caller owns the on/off state.
+ *
+ * WHY THE RULE BELONGS TO THE ITEM UNDER IT
+ *
+ * FLTK draws FL_MENU_DIVIDER itself, in menuwindow::drawentry(), after the
+ * label and in colours of its own -- so a labeltype cannot restyle it: the
+ * label has already been drawn by then. Overdrawing it from the NEXT item
+ * does not work either, because a hover redraws just two entries, and a lone
+ * redraw of the item above would put FLTK's line back with nothing to cover
+ * it. So editMenuPad() clears FL_MENU_DIVIDER and hands the rule to the item
+ * below, which draws it in the leading above its own cell.
+ *
+ * Those two rows are the only ones safe to draw in. drawentry() erases an
+ * entry under
+ *
+ *     fl_push_clip(xx+1, yy-(LEADING-2)/2, ww-2, hh+(LEADING-2));
+ *
+ * which for the item above reaches exactly to our top row minus one, and for
+ * the item itself starts exactly one row below our bottom one. A rule drawn
+ * any higher would be erased by the neighbour above on every hover.
+ *
+ * The one thing here that is not Word's is the air around a separator, and
+ * it cannot be: Word gives one a row of its own, 10px, where FLTK has only
+ * the 4px LEADING between two rows -- every entry in a menu is one height.
+ * Measured text-to-rule, Word is 7px above and 10 below; this is 5 and 4.
+ * The alternative, a dummy item, buys a full 19px row and lands at 12 and
+ * 12 -- no closer, and 9px taller per separator. Left as is.
  */
 
 #include <FL/Fl.H>
@@ -29,84 +65,152 @@
 #include <FL/Fl_Window.H>
 #include <FL/fl_draw.H>
 
-#define EDIT_MENUPAD_LABEL   FL_FREE_LABELTYPE
-#define EDIT_MENUCHECK_LABEL ((Fl_Labeltype)(FL_FREE_LABELTYPE + 1))
-#define EDIT_MENUTITLE_LABEL ((Fl_Labeltype)(FL_FREE_LABELTYPE + 2))
+/* The item labeltypes: a base plus a two-bit state. Keep them contiguous --
+   editMenuCheck() and editMenuPad() do arithmetic on them. */
+#define EDIT_MENU_CHECKED    1
+#define EDIT_MENU_RULED      2
+#define EDIT_MENUPAD_LABEL      FL_FREE_LABELTYPE                      /* +0 */
+#define EDIT_MENUCHECK_LABEL    ((Fl_Labeltype)(FL_FREE_LABELTYPE + 1))
+#define EDIT_MENUSEP_LABEL      ((Fl_Labeltype)(FL_FREE_LABELTYPE + 2))
+#define EDIT_MENUSEPCHECK_LABEL ((Fl_Labeltype)(FL_FREE_LABELTYPE + 3))
+#define EDIT_MENUTITLE_LABEL    ((Fl_Labeltype)(FL_FREE_LABELTYPE + 4))
 
-/* Width of the toggle column, mirroring Fl_Menu_Item::draw(): a W-wide box
-   at x+2, text at x+W+3, where d = (h - size + 1) / 2, W = h - 2d.
+/* ButtonShadow in the Win9x default scheme, which is the palette
+   FL_BACKGROUND_COLOR's 192-gray already assumes. FL_DARK3 is 85 -- too dark
+   for an etched line next to white. */
+#define EDIT_MENU_SHADOW fl_rgb_color(128, 128, 128)
 
-   `size` is the LABEL's size, not FL_NORMAL_SIZE: a menu with its own
-   textsize() (editMenuBarStyle() sets 11px) would otherwise have its check
-   column computed from the global 12 and drift away from its own text. */
-static int editMenuPadWidth(int h, int size)
+/* Added to the MEASURED text height to reach Word's row. FLTK builds the row
+   out of the tallest label plus LEADING (4), and every item in these menus
+   shares one font, so the height handed back to editMenuItemDraw() is this
+   same number -- measure and draw agree without having to guess. */
+static int editMenuRowPad(int size)
 {
-    int d = (h - size + 1) / 2;
-    return (h - 2 * d) + 3;
+    return (size + 2) / 4;              /* 3 at the 11px menu font */
 }
 
-static void editMenuPadDraw(const Fl_Label *o, int X, int Y, int W, int H,
-                            Fl_Align align)
+/* Text offset inside an item: the icon square (the row height) plus Word's
+   five-pixel gap, less the 1px the square is inset by. */
+static int editMenuPadWidth(int h)
 {
-    int pad = editMenuPadWidth(H, o->size);
+    return h + 7;
+}
+
+/* Word's checked-toolbar-button square: 1px sunken, a white / face
+   checkerboard inside it, the Win95 tick centred on top. The checkerboard is
+   a point per pixel -- about 110 of them at 19px, which is nothing next to
+   the rest of a menu redraw even on a PII, and there is no stipple in FLTK
+   that would survive both platforms. */
+static void editMenuCheckBox(int x, int y, int side, int size)
+{
+    /* The tick as Word draws it: seven 2px column runs, down three and up
+       four. A stroked line cannot reproduce it at this size. */
+    static const int tickDY[7] = { 2, 3, 4, 3, 2, 1, 0 };
+    int s = size / 11;                  /* 1 at 96 DPI, 2 at 192, ... */
+    int gx, gy, i, px, py;
+    if (s < 1) s = 1;
+
+    fl_color(FL_BACKGROUND_COLOR);
+    fl_rectf(x + 1, y + 1, side - 2, side - 2);
+    fl_color(FL_WHITE);
+    for (py = 1; py < side - 1; py++)
+        for (px = 1; px < side - 1; px++)
+            if ((px + py) & 1) fl_point(x + px, y + py);
+
+    fl_color(EDIT_MENU_SHADOW);
+    fl_xyline(x, y, x + side - 2);                  /* shadow: top, left   */
+    fl_yxline(x, y, y + side - 2);
+    fl_color(FL_WHITE);
+    fl_xyline(x, y + side - 1, x + side - 1);       /* highlight: bottom,  */
+    fl_yxline(x + side - 1, y, y + side - 1);       /* right               */
+
+    gx = x + (side - 7 * s) / 2;
+    gy = y + (side - 6 * s + 1) / 2;
+    fl_color(FL_FOREGROUND_COLOR);
+    for (i = 0; i < 7; i++)
+        fl_rectf(gx + i * s, gy + tickDY[i] * s, s, 2 * s);
+}
+
+/* One draw for all four item states; which one is in the labeltype itself.
+   Leaves fl_color() on the label colour, because drawentry() draws the
+   submenu arrow and the shortcut text with whatever this left set. */
+static void editMenuItemDraw(const Fl_Label *o, int X, int Y, int W, int H,
+                             Fl_Align align)
+{
+    int bits = (int)o->type - (int)FL_FREE_LABELTYPE;
+    int pad  = editMenuPadWidth(H);
+
+    if (bits & EDIT_MENU_RULED) {
+        /* X is the content edge plus 3 (FLTK's own item inset), which is
+           exactly Word's left inset; the right end mirrors it off the
+           window, whose width is the only honest source for it here. */
+        Fl_Window *win = Fl_Window::current();
+        int right = win ? win->w() - 6 : X + W;
+        fl_color(EDIT_MENU_SHADOW); fl_xyline(X, Y - 3, right);
+        fl_color(FL_WHITE);         fl_xyline(X, Y - 2, right);
+    }
+    /* Square the height of the HIGHLIGHT, one pixel in from the edge.
+       Word's fills the whole 19px row, but ours cannot: the bottom two rows
+       of a cell are where the next item draws its rule, so a full-height
+       square under a separator would be struck through. The highlight is
+       what reads as the row anyway. */
+    if (bits & EDIT_MENU_CHECKED)
+        editMenuCheckBox(X - 2, Y - 1, H + 2, o->size);
+
     fl_font(o->font, o->size);
     fl_color((Fl_Color)o->color);
     fl_draw(o->value, X + pad, Y, W > pad ? W - pad : 0, H, align, o->image);
 }
 
-/* Same as editMenuPadDraw, plus a check mark in the column. Item-relative,
-   the label is drawn at x+3 and FLTK's toggle box at x+2, so the box would
-   sit at X-1; the tick is laid out inside that square. */
-static void editMenuCheckDraw(const Fl_Label *o, int X, int Y, int W, int H,
-                              Fl_Align align)
-{
-    int d  = (H - o->size + 1) / 2;
-    int s  = H - 2 * d;                 /* square side */
-    int bx = X - 1, by = Y + d;
-    int t  = s / 7;                     /* stroke width, grows with DPI */
-    if (t < 1) t = 1;
-
-    fl_color((Fl_Color)o->color);
-    fl_line_style(FL_SOLID | FL_CAP_ROUND | FL_JOIN_ROUND, t);
-    fl_line(bx + s * 2 / 10, by + s * 5 / 10,
-            bx + s * 4 / 10, by + s * 7 / 10,
-            bx + s * 8 / 10, by + s * 3 / 10);
-    fl_line_style(0);
-
-    editMenuPadDraw(o, X, Y, W, H, align);
-}
-
-static void editMenuPadMeasure(const Fl_Label *o, int &W, int &H)
+static void editMenuItemMeasure(const Fl_Label *o, int &W, int &H)
 {
     fl_font(o->font, o->size);
     fl_measure(o->value, W, H);
-    /* Menus measure with H = text height; the item is drawn LEADING taller,
-       which only moves the column by a pixel at most -- close enough here. */
-    W += editMenuPadWidth(H, o->size);
+    H += editMenuRowPad(o->size);
+    W += editMenuPadWidth(H);
 }
 
-/* Items from `m` to the end of this (sub)menu level, recursing into submenus. */
-static void editMenuPadLevel(Fl_Menu_Item *m)
-{
-    for (; m && m->text; m = m->next()) {
-        if (!(m->flags & (FL_MENU_TOGGLE | FL_MENU_RADIO)))
-            m->labeltype(EDIT_MENUPAD_LABEL);
-        if (m->flags & FL_SUBMENU) editMenuPadLevel(m + 1);
-    }
-}
-
-/* Show or hide an item's check mark (item must be padded, not a toggle). */
+/* Show or hide an item's check mark (item must be one of ours, not a
+   toggle). Preserves the rule bit. */
 static void editMenuCheck(Fl_Menu_Item *m, int on)
 {
-    m->labeltype(on ? EDIT_MENUCHECK_LABEL : EDIT_MENUPAD_LABEL);
+    int bits = (int)m->labeltype() - (int)FL_FREE_LABELTYPE;
+    if (bits < 0 || bits > 3) return;
+    bits = on ? (bits | EDIT_MENU_CHECKED) : (bits & ~EDIT_MENU_CHECKED);
+    m->labeltype((Fl_Labeltype)(FL_FREE_LABELTYPE + bits));
+}
+
+/* Items from `m` to the end of this (sub)menu level, recursing into
+   submenus. FL_MENU_DIVIDER is consumed here and re-expressed as the rule
+   bit on the FOLLOWING item -- see the header comment. */
+static void editMenuPadLevel(Fl_Menu_Item *m)
+{
+    int carry = 0;
+    for (; m && m->text; m = m->next()) {
+        int bits = carry;
+        carry = 0;
+        if (m->flags & FL_MENU_DIVIDER) {
+            m->flags &= ~FL_MENU_DIVIDER;
+            carry = EDIT_MENU_RULED;
+        }
+        if (m->flags & FL_SUBMENU) editMenuPadLevel(m + 1);
+        /* A toggle/radio keeps FLTK's own label type, so it cannot carry a
+           rule. Nothing here uses them; editMenuCheck() is the way. */
+        if (!(m->flags & (FL_MENU_TOGGLE | FL_MENU_RADIO)))
+            m->labeltype((Fl_Labeltype)(FL_FREE_LABELTYPE + bits));
+    }
 }
 
 static void editMenuPad(Fl_Menu_ *menu)
 {
-    Fl::set_labeltype(EDIT_MENUPAD_LABEL, editMenuPadDraw, editMenuPadMeasure);
-    Fl::set_labeltype(EDIT_MENUCHECK_LABEL, editMenuCheckDraw, editMenuPadMeasure);
-    /* Top level = menu-bar titles: unpadded. Their drop-downs: padded. */
-    Fl_Menu_Item *m = (Fl_Menu_Item *)menu->menu();
+    Fl_Menu_Item *m;
+    int t;
+    for (t = 0; t <= EDIT_MENU_CHECKED + EDIT_MENU_RULED; t++)
+        Fl::set_labeltype((Fl_Labeltype)(FL_FREE_LABELTYPE + t),
+                          editMenuItemDraw, editMenuItemMeasure);
+    /* Top level = menu-bar titles: left to editMenuBarStyle(). Their
+       drop-downs: ours. */
+    m = (Fl_Menu_Item *)menu->menu();
     for (; m && m->text; m = m->next())
         if (m->flags & FL_SUBMENU) editMenuPadLevel(m + 1);
 }
