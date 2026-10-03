@@ -31,17 +31,21 @@
 #define EDIT_MENUCHECK_LABEL ((Fl_Labeltype)(FL_FREE_LABELTYPE + 1))
 
 /* Width of the toggle column, mirroring Fl_Menu_Item::draw(): a W-wide box
-   at x+2, text at x+W+3, where d = (h - FL_NORMAL_SIZE + 1) / 2, W = h - 2d. */
-static int editMenuPadWidth(int h)
+   at x+2, text at x+W+3, where d = (h - size + 1) / 2, W = h - 2d.
+
+   `size` is the LABEL's size, not FL_NORMAL_SIZE: a menu with its own
+   textsize() (editMenuBarStyle() sets 11px) would otherwise have its check
+   column computed from the global 12 and drift away from its own text. */
+static int editMenuPadWidth(int h, int size)
 {
-    int d = (h - FL_NORMAL_SIZE + 1) / 2;
+    int d = (h - size + 1) / 2;
     return (h - 2 * d) + 3;
 }
 
 static void editMenuPadDraw(const Fl_Label *o, int X, int Y, int W, int H,
                             Fl_Align align)
 {
-    int pad = editMenuPadWidth(H);
+    int pad = editMenuPadWidth(H, o->size);
     fl_font(o->font, o->size);
     fl_color((Fl_Color)o->color);
     fl_draw(o->value, X + pad, Y, W > pad ? W - pad : 0, H, align, o->image);
@@ -53,7 +57,7 @@ static void editMenuPadDraw(const Fl_Label *o, int X, int Y, int W, int H,
 static void editMenuCheckDraw(const Fl_Label *o, int X, int Y, int W, int H,
                               Fl_Align align)
 {
-    int d  = (H - FL_NORMAL_SIZE + 1) / 2;
+    int d  = (H - o->size + 1) / 2;
     int s  = H - 2 * d;                 /* square side */
     int bx = X - 1, by = Y + d;
     int t  = s / 7;                     /* stroke width, grows with DPI */
@@ -75,7 +79,7 @@ static void editMenuPadMeasure(const Fl_Label *o, int &W, int &H)
     fl_measure(o->value, W, H);
     /* Menus measure with H = text height; the item is drawn LEADING taller,
        which only moves the column by a pixel at most -- close enough here. */
-    W += editMenuPadWidth(H);
+    W += editMenuPadWidth(H, o->size);
 }
 
 /* Items from `m` to the end of this (sub)menu level, recursing into submenus. */
@@ -102,6 +106,41 @@ static void editMenuPad(Fl_Menu_ *menu)
     Fl_Menu_Item *m = (Fl_Menu_Item *)menu->menu();
     for (; m && m->text; m = m->next())
         if (m->flags & FL_SUBMENU) editMenuPadLevel(m + 1);
+}
+
+/* ---- menu bar frame ----------------------------------------------------
+ * FLTK's default menu bar is FL_UP_BOX: a 3D button-style frame on all four
+ * sides, which reads as a row of buttons rather than a menu. IE5 (and the
+ * Win9x toolbars generally) instead rule the band off with a 1px groove --
+ * dark gray then white -- along the top and bottom edges only, with nothing
+ * at the left and right.
+ *
+ * Fl_Menu_Bar::draw() lays its items out across the full y()..y()+h(), not
+ * inside the box's edges, so the 2px grooves are not subtracted from the
+ * label area: the text stays vertically centred in the whole band and simply
+ * needs the band to be ~4px taller than the text. The dy/dh registered below
+ * are therefore only for anyone who asks the boxtype about its insets.
+ */
+#define EDIT_MENUBAR_BOX ((Fl_Boxtype)FL_FREE_BOXTYPE)
+
+static void editMenuBarBoxDraw(int X, int Y, int W, int H, Fl_Color c)
+{
+    fl_color(c);
+    fl_rectf(X, Y, W, H);
+    fl_color(FL_DARK3); fl_xyline(X, Y,         X + W - 1);
+    fl_color(FL_WHITE); fl_xyline(X, Y + 1,     X + W - 1);
+    fl_color(FL_DARK3); fl_xyline(X, Y + H - 2, X + W - 1);
+    fl_color(FL_WHITE); fl_xyline(X, Y + H - 1, X + W - 1);
+}
+
+/* Apply the IE5 look to a menu bar: the groove frame above, and `fontPx` for
+   both the bar titles and the drop-down items (pass an editDpi()-scaled
+   value). Call after menu() / editMenuPad(). */
+static void editMenuBarStyle(Fl_Menu_ *menu, int fontPx)
+{
+    Fl::set_boxtype(EDIT_MENUBAR_BOX, editMenuBarBoxDraw, 0, 2, 0, 4);
+    menu->box(EDIT_MENUBAR_BOX);
+    if (fontPx > 0) menu->textsize(fontPx);
 }
 
 #endif /* EDIT_MENUPAD_H */

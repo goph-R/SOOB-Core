@@ -19,6 +19,15 @@
  * -lcomdlg32 is already in t98.bat / c98.bat / f98.bat, so there is nothing to
  * add to the build.
  *
+ * AND ONE OWNER
+ *
+ * hwndOwner must be the application's own window. With NULL the dialog is
+ * owned by the desktop, so it is not modal to us: the main window can be
+ * raised over the top of it, clicks land behind it, and on 9x the keyboard
+ * focus goes with whichever window was clicked last -- the dialog looks
+ * stuck. Callers pass it in once with codeFileDlgSetOwner(fl_xid(window));
+ * it stays NULL (= the old behaviour) for anyone who does not.
+ *
  * TWO FLAGS THAT MATTER
  *
  *   OFN_NOCHANGEDIR  -- without it the dialog leaves the process sitting in
@@ -52,6 +61,16 @@
 #else
 #  include <FL/Fl_File_Chooser.H>
 #endif
+
+/* Owner window for the dialogs -- see "AND ONE OWNER" above. Held as void*
+ * rather than HWND so this declaration needs no FLTK platform header: FL/x.H
+ * drags in the X11 headers on the Linux build, where there is no HWND at all.
+ * The app passes fl_xid(window); off Windows nothing reads it. */
+static void *codeFileDlgOwner = 0;
+static void codeFileDlgSetOwner(void *nativeWindowHandle)
+{
+    codeFileDlgOwner = nativeWindowHandle;
+}
 
 /* Win32 filter: pairs of NUL-terminated strings, list ends with an extra NUL.
  * The trailing "\0" in the literal supplies that second terminator. */
@@ -100,7 +119,7 @@ static int codeFileDlgWin32(char *out, int outlen, int saving,
 
     memset(&ofn, 0, sizeof(ofn));
     ofn.lStructSize     = sizeof(OPENFILENAMEA);
-    ofn.hwndOwner       = NULL;
+    ofn.hwndOwner       = (HWND)codeFileDlgOwner;
     ofn.lpstrFilter     = CODE_FILTER_WIN32;
     ofn.nFilterIndex    = 1;
     ofn.lpstrFile       = buf;
