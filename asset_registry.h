@@ -21,8 +21,8 @@
 #define ASSET_NAME_MAX    32
 #define ASSET_PATH_MAX    128
 
-/* A Region is a sub-rectangle of a named texture. Game scripts address
-   it by name via drawRegion(). sx/sy/sw/sh are in source-texture
+/* An AssetRegion is a sub-rectangle of a named texture. Game scripts
+   address it by name via drawRegion(). sx/sy/sw/sh are in source-texture
    pixels; UV normalization happens at draw time so the texture can be
    any size.
 
@@ -30,8 +30,15 @@
    four cut lines (vertical x1/x2, horizontal y1/y2) relative to the
    region's own top-left, in source pixels. Widgets read this via the
    regionSlice() Lua binding to drive draw9patch() without repeating
-   the slice numbers at every call site. */
-struct Region {
+   the slice numbers at every call site.
+
+   NOT plain `Region`: X11's Xutil.h has `typedef struct _XRegion *Region`
+   in the global namespace, and FLTK's Linux build pulls it in through
+   FL/x.H -- so the SOOB-Engine editor, which includes both, would not
+   compile on Linux. Include order cannot settle it; whichever of the two
+   lands second is the error. X11's name is not ours to move, and Windows
+   never sees an X11 header, which is why only Linux ever complained. */
+struct AssetRegion {
     char texName[ASSET_NAME_MAX];  /* references AssetRegistry.textureNames */
     int  sx, sy, sw, sh;
     int  hasSlice;                 /* 0 = plain region, 1 = carries slice info */
@@ -49,7 +56,7 @@ struct AssetRegistry {
 
     int    regionCount;
     char   regionNames[ASSET_REGION_MAX][ASSET_NAME_MAX];
-    Region regions[ASSET_REGION_MAX];
+    AssetRegion regions[ASSET_REGION_MAX];
 };
 
 static void assetRegInit(AssetRegistry *r)
@@ -147,7 +154,7 @@ static void assetRegSetLastRegionSlice(AssetRegistry *r,
     r->regions[i].y1 = y1; r->regions[i].y2 = y2;
 }
 
-static const Region *assetRegFindRegion(const AssetRegistry *r, const char *name)
+static const AssetRegion *assetRegFindRegion(const AssetRegistry *r, const char *name)
 {
     if (!r || !name) return NULL;
     for (int i = 0; i < r->regionCount; i++) {

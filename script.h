@@ -278,11 +278,11 @@ static void scrOptfieldColor(lua_State *L, int idx,
  *   stretching an atlas chunk to a widget-sized rect (9-patch corners,
  *   edges, center).
  *
- * Region must be registered (no raw-path fallback). Must be called from
+ * The region must be registered (no raw-path fallback). Must be called from
  * inside uiBegin/uiEnd (i.e., onRender). */
 /* ---- shared drawing core -------------------------------------------------
  * drawRegion and drawTexRect differ only in where the SOURCE rectangle comes
- * from -- a registered Region, or the caller's own pixels. Everything after
+ * from -- a registered region, or the caller's own pixels. Everything after
  * that (the options, fill clipping, alignment, scale, rotation, tint and the
  * UV maths) is identical, so it lives here once rather than in two copies
  * that would drift apart.
@@ -474,7 +474,7 @@ static int scrDrawRegion(lua_State *L)
     ScrDrawOpts o;
     scrReadDrawOpts(L, &o);
 
-    const Region *rg = assetRegFindRegion(s->assets, name);
+    const AssetRegion *rg = assetRegFindRegion(s->assets, name);
     if (!rg) {
         conLogf("drawRegion: unknown region '%s'\n", name);
         return 0;
@@ -699,7 +699,7 @@ static int scrRegionSlice(lua_State *L)
     lua_pop(L, 1);
 
     const char *name = luaL_checkstring(L, 1);
-    const Region *rg = assetRegFindRegion(s->assets, name);
+    const AssetRegion *rg = assetRegFindRegion(s->assets, name);
     if (!rg || !rg->hasSlice) return 0;
 
     lua_pushinteger(L, rg->x1);
@@ -724,7 +724,7 @@ static int scrRegionSize(lua_State *L)
     lua_pop(L, 1);
 
     const char *name = luaL_checkstring(L, 1);
-    const Region *rg = assetRegFindRegion(s->assets, name);
+    const AssetRegion *rg = assetRegFindRegion(s->assets, name);
     if (!rg) return 0;
 
     lua_pushinteger(L, rg->sw);
@@ -747,7 +747,7 @@ static int scrDrawBg(lua_State *L)
     lua_pop(L, 1);
 
     const char *name = luaL_checkstring(L, 1);
-    const Region *rg = assetRegFindRegion(s->assets, name);
+    const AssetRegion *rg = assetRegFindRegion(s->assets, name);
     if (!rg) {
         conLogf("drawBg: unknown region '%s'\n", name);
         return 0;
@@ -810,7 +810,7 @@ static int scrDrawBlur(lua_State *L)
         alpha = scrOptfieldNum(L, 2, "alpha", 0.6f);
     }
 
-    const Region *rg = assetRegFindRegion(s->assets, name);
+    const AssetRegion *rg = assetRegFindRegion(s->assets, name);
     if (!rg) {
         conLogf("drawBlur: unknown region '%s'\n", name);
         return 0;
@@ -1462,7 +1462,7 @@ static void scrOnFont(ScriptSystem *s, const char *name, const char *path)
    { tex = "name", x = N, y = N, w = N, h = N
      [, slice = { x1 = N, x2 = N, y1 = N, y2 = N }] }.
    Missing or non-positive w/h is a config error. The optional `slice`
-   sub-table is read out into the Region's 9-patch metadata so widgets
+   sub-table is read out into the AssetRegion's 9-patch metadata so widgets
    can call regionSlice(name) at runtime to drive draw9patch without
    repeating the slice numbers at every call site. */
 static int scrWalkRegionsTable(lua_State *L, ScriptSystem *s)
