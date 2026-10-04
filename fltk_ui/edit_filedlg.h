@@ -74,9 +74,19 @@ static void codeFileDlgSetOwner(void *nativeWindowHandle)
 
 /* Win32 filter: pairs of NUL-terminated strings, list ends with an extra NUL.
  * The trailing "\0" in the literal supplies that second terminator. */
-/* Every extension lexLangFromPath() recognises, so the default filter lists
- * everything the editor can highlight. Keep the two macros in step. */
+/* "All files" is deliberately FIRST, so nFilterIndex = 1 selects it and the
+ * dialog opens unfiltered. On Windows 98 the Explorer-style comdlg32 dialog
+ * stalls for about a second per file whose extension has no HKEY_CLASSES_ROOT
+ * entry (a ".utf8" next to the sources is enough) while a real pattern list is
+ * active -- it does an association lookup per rejected file, and the Win9x
+ * registry is slow. "*.*" short-circuits that path. The bug is comdlg32's, not
+ * ours: Photoshop 7 on the same machine freezes identically. The narrower
+ * filters below are still there for anyone who picks one.
+ *
+ * "Source files" lists every extension lexLangFromPath() recognises, so it
+ * covers everything the editor can highlight. Keep the two macros in step. */
 #define CODE_FILTER_WIN32 \
+    "All files (*.*)\0*.*\0" \
     "Source files\0*.lua;*.pas;*.pp;*.inc;*.dpr;*.lpr;*.md;" \
         "*.c;*.cc;*.cpp;*.cxx;*.h;*.hh;*.hpp;*.hxx;*.java;*.js;*.mjs;*.cjs;*.jsx;" \
         "*.py;*.pyw;*.css;*.htm;*.html;*.xhtml;*.php;*.phtml;*.sql;" \
@@ -93,8 +103,7 @@ static void codeFileDlgSetOwner(void *nativeWindowHandle)
     "Batch files (*.bat;*.cmd)\0*.bat;*.cmd\0" \
     "INI / config (*.ini;*.cfg;*.inf)\0*.ini;*.cfg;*.inf\0" \
     "XML (*.xml;*.xsd;*.xsl;*.xslt;*.svg)\0*.xml;*.xsd;*.xsl;*.xslt;*.svg\0" \
-    "JSON (*.json)\0*.json\0" \
-    "All files (*.*)\0*.*\0"
+    "JSON (*.json)\0*.json\0"
 
 /* FLTK's own chooser uses a different syntax for the same idea. */
 #define CODE_FILTER_FLTK \
@@ -132,7 +141,7 @@ static int codeFileDlgWin32(char *out, int outlen, int saving,
     ofn.lStructSize     = sizeof(OPENFILENAMEA);
     ofn.hwndOwner       = (HWND)codeFileDlgOwner;
     ofn.lpstrFilter     = CODE_FILTER_WIN32;
-    ofn.nFilterIndex    = 1;
+    ofn.nFilterIndex    = 1;         /* "All files" -- see CODE_FILTER_WIN32 */
     ofn.lpstrFile       = buf;
     ofn.nMaxFile        = sizeof(buf);
     ofn.lpstrTitle      = title;
