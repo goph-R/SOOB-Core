@@ -42,6 +42,7 @@
 #include <FL/Fl.H>
 #include <FL/Fl_Text_Editor.H>
 #include <FL/Fl_Text_Buffer.H>
+#include <FL/Fl_Menu_Item.H>
 #include <FL/fl_draw.H>
 #include <stdlib.h>
 #include <string.h>
@@ -522,6 +523,24 @@ static int codeUndoRedo(CodeUndo *u, Fl_Text_Buffer *buf, int *caret)
     return 1;
 }
 
+/* ---- right-click menu ------------------------------------------------
+ * Cut / Copy / Paste / Delete. The shortcuts are shown for reference only --
+ * popup() does not match them; the keys reach Fl_Text_Editor's own bindings.
+ *
+ * Shared by every editor, so an app can restyle the items once (e.g. with
+ * editMenuPadLevel()) and point codeContextLook at its menu bar: a popup takes
+ * its frame, font size and highlight colour from that widget, so with it the
+ * menu looks like the app's drop-downs instead of FLTK's defaults. */
+enum { CODE_CTX_CUT, CODE_CTX_COPY, CODE_CTX_PASTE, CODE_CTX_DELETE };
+static Fl_Menu_Item codeContextMenu[] = {
+    { "Cu&t",    FL_CTRL + 'x', 0, (void *)CODE_CTX_CUT },
+    { "&Copy",   FL_CTRL + 'c', 0, (void *)CODE_CTX_COPY },
+    { "&Paste",  FL_CTRL + 'v', 0, (void *)CODE_CTX_PASTE },
+    { "&Delete", FL_Delete,     0, (void *)CODE_CTX_DELETE },
+    { 0 }
+};
+static const Fl_Menu_ *codeContextLook = 0;
+
 class CodeEditor : public Fl_Text_Editor {
 public:
     CodeEditor(int X, int Y, int W, int H, const char *l = 0)
@@ -860,6 +879,10 @@ public:
     int handle(int e)
     {
         int r;
+        if (e == FL_PUSH && Fl::event_button() == FL_RIGHT_MOUSE) {
+            contextMenu();
+            return 1;
+        }
         if (e == FL_KEYBOARD) {
             int st = Fl::event_state();
             int k  = Fl::event_key();
@@ -919,6 +942,44 @@ public:
             break;
         }
         return r;
+    }
+
+    /* Right click: a click outside the selection drops it and moves the caret
+     * there first, so Paste lands where you clicked; a click inside keeps it,
+     * so Cut / Copy / Delete act on it. Paste stays enabled regardless --
+     * Fl::clipboard_contains() asks for CF_UNICODETEXT, which Win98 need not
+     * report for text another program put there as CF_TEXT, and an empty
+     * paste is harmless anyway. Each action is the same kf_* function the
+     * keyboard binding runs, so undo and paste re-indent behave identically. */
+    void contextMenu()
+    {
+        const Fl_Menu_Item *m;
+        int s, t, pos, sel, k;
+
+        take_focus();
+        pos = xy_to_position(Fl::event_x(), Fl::event_y(), CURSOR_POS);
+        sel = mTextBuf->selection_position(&s, &t);
+        if (sel && (pos < s || pos > t)) sel = 0;
+        if (!sel) {
+            mTextBuf->unselect();
+            insert_position(pos);
+        }
+        caretRestart();
+        for (k = 0; codeContextMenu[k].text; k++) {
+            if (k == CODE_CTX_PASTE) continue;
+            if (sel) codeContextMenu[k].activate();
+            else     codeContextMenu[k].deactivate();
+        }
+        m = codeContextMenu->popup(Fl::event_x(), Fl::event_y(), 0, 0,
+                                   codeContextLook);
+        if (!m) return;
+        switch ((int)(long)m->user_data()) {
+        case CODE_CTX_CUT:    kf_cut(0, this);    break;
+        case CODE_CTX_COPY:   kf_copy(0, this);   break;
+        case CODE_CTX_PASTE:  kf_paste(0, this);  break;
+        case CODE_CTX_DELETE: kf_delete(0, this); break;
+        }
+        caretRestart();
     }
 
     /* ---- indentation -----------------------------------------------------

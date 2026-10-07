@@ -5,16 +5,34 @@
  * Covers the lexers and, importantly, the carry state stored on each
  * line's '\n' -- that is what edit_code.h relies on to relex incrementally
  * instead of re-parsing the whole buffer on every keystroke.
+ *
+ * Also the JSON formatter (edit_json.h), which is text-only as well.
  */
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
 
 #include "edit_lex.h"
+#include "edit_json.h"
 
 static int failures = 0;
 #define CHECK(c) do { if (!(c)) { \
     printf("FAIL line %d: %s\n", __LINE__, #c); failures++; } } while (0)
+
+/* codeJsonFormat() == want; want 0 = must fail, at byte errAt. */
+static int jsonIs(const char *src, int indent, int tabs, const char *want,
+                  int errAt)
+{
+    int at = -1, ok;
+    const char *msg = 0;
+    char *out = codeJsonFormat(src, (int)strlen(src), indent, tabs, &at, &msg);
+    if (!want) ok = !out && msg && at == errAt;
+    else       ok = out && strcmp(out, want) == 0;
+    if (!ok) printf("  json: got [%s] err %s at %d\n", out ? out : "(null)",
+                    msg ? msg : "-", at);
+    free(out);
+    return ok;
+}
 
 /* Lex a whole (multi-line) string the way edit_code.h does: one line at a
  * time, carry state parked in the style byte of each '\n'. */
@@ -803,6 +821,28 @@ int main(void)
         CHECK(lexMdFenceSub("ts", 2)   == lexMdFenceSub("js", 2));
         /* ... but JSON is deliberately NOT a fence tag: see edit_lex.h */
         CHECK(lexMdFenceSub("json", 4) == 0);
+    }
+
+    /* ---------------- JSON formatter ---------------- */
+    CHECK(jsonIs("{\"a\":1,\"b\":[true,false,null],\"c\":{}}", 2, 0,
+                 "{\n  \"a\": 1,\n  \"b\": [\n    true,\n    false,\n    null\n  ],\n"
+                 "  \"c\": {}\n}", 0));
+    CHECK(jsonIs("[ ]\n", 4, 0, "[]\n", 0));              /* keeps a final newline */
+    CHECK(jsonIs("{\"k\":[1]}", 4, 1, "{\n\t\"k\": [\n\t\t1\n\t]\n}", 0));
+    CHECK(jsonIs(" \"a \\\" b\" ", 4, 0, "\"a \\\" b\"", 0)); /* escapes verbatim */
+    CHECK(jsonIs("[-0.5e+3,10,0]", 1, 0, "[\n -0.5e+3,\n 10,\n 0\n]", 0));
+    CHECK(jsonIs("{\"a\" 1}", 4, 0, 0, 5));               /* missing colon */
+    CHECK(jsonIs("[1,]", 4, 0, 0, 3));                    /* trailing comma */
+    CHECK(jsonIs("[1] x", 4, 0, 0, 4));                   /* trailing junk */
+    CHECK(jsonIs("\"abc", 4, 0, 0, 0));                   /* unterminated */
+    CHECK(jsonIs("[01]", 4, 0, 0, 2));                    /* leading zero */
+    CHECK(jsonIs("[tru]", 4, 0, 0, 1));
+    CHECK(jsonIs("", 4, 0, 0, 0));
+    {
+        char deep[CODE_JSON_MAX_DEPTH + 2];
+        memset(deep, '[', sizeof(deep) - 1);
+        deep[sizeof(deep) - 1] = '\0';
+        CHECK(jsonIs(deep, 4, 0, 0, CODE_JSON_MAX_DEPTH));
     }
 
     if (failures) { printf("\n%d FAILURE(S)\n", failures); return 1; }
