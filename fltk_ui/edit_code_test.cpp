@@ -232,6 +232,30 @@ int main(void)
         CHECK(allSlot(src, sty, "Dpress",   LEX_IDENT));
         CHECK(allSlot(src, sty, "(https://github.com/goph-R/dynart-dpress)", LEX_KEYWORD));
     }
+    /* emphasis follows CommonMark's flanking rules: no intraword _, and a
+     * delimiter next to whitespace (or the line's ends) cannot open/close */
+    {
+        const char *src =
+            "Clear FL_MENU_DIVIDER and FL_SUBMENU here.\n"
+            "x = a * b * c;\n"
+            "trail *\n"
+            "* bullet *star\n"
+            "_lead and tail_\n"
+            "2*3*4 and __init__ ok\n"
+            "un **closed and _open\n"
+            "(*paren*) end\n";
+        lexText(LEX_LANG_MARKDOWN, src, sty);
+
+        CHECK(allSlot(src, sty, "FL_MENU_DIVIDER and FL_SUBMENU", LEX_PLAIN));
+        CHECK(allSlot(src, sty, "a * b * c", LEX_PLAIN));
+        CHECK(allSlot(src, sty, "trail *", LEX_PLAIN));
+        CHECK(allSlot(src, sty, "*star", LEX_PLAIN));
+        CHECK(allSlot(src, sty, "_lead and tail_", LEX_EM));
+        CHECK(allSlot(src, sty, "*3*", LEX_EM));
+        CHECK(allSlot(src, sty, "__init__", LEX_STRONG));
+        CHECK(allSlot(src, sty, "**closed and _open", LEX_PLAIN));
+        CHECK(allSlot(src, sty, "*paren*", LEX_EM));
+    }
     /* fenced block delegating to the Lua lexer -- the Dpress nesting trick */
     {
         const char *src =
@@ -273,6 +297,38 @@ int main(void)
         CHECK(carryAfterLine(src, sty, 1) == LS_MD_FENCE + 0);   /* ~~~ ignored */
         CHECK(carryAfterLine(src, sty, 2) == LS_NORMAL);
         CHECK(allSlot(src, sty, "out", LEX_PLAIN));
+    }
+    /* a ```` fence SHOWS a ``` block: the inner fences are content, and only
+     * 4+ backticks with nothing after them close it */
+    {
+        const char *src =
+            "````markdown\n"
+            "```lua\n"
+            "x\n"
+            "```\n"
+            "```` nope\n"
+            "`````\n"
+            "out\n"
+            "~~~~\n"
+            "```\n"
+            "~~~\n"
+            "~~~~ \n"
+            "```\n"
+            "```lua\n"
+            "```  \n";
+        lexText(LEX_LANG_MARKDOWN, src, sty);
+        CHECK(carryAfterLine(src, sty, 0) == LS_MD_FENCE_LONG);
+        CHECK(carryAfterLine(src, sty, 1) == LS_MD_FENCE_LONG);  /* ```lua inside */
+        CHECK(carryAfterLine(src, sty, 3) == LS_MD_FENCE_LONG);  /* bare ``` inside */
+        CHECK(carryAfterLine(src, sty, 4) == LS_MD_FENCE_LONG);  /* text after it */
+        CHECK(carryAfterLine(src, sty, 5) == LS_NORMAL);         /* 5 closes 4 */
+        CHECK(allSlot(src, sty, "out", LEX_PLAIN));
+        CHECK(carryAfterLine(src, sty, 7) == LS_MD_FENCE_LONG + 1);
+        CHECK(carryAfterLine(src, sty, 9) == LS_MD_FENCE_LONG + 1);  /* ~~~ too short */
+        CHECK(carryAfterLine(src, sty, 10) == LS_NORMAL);        /* trailing blank ok */
+        CHECK(carryAfterLine(src, sty, 11) == LS_MD_FENCE + 0);
+        CHECK(carryAfterLine(src, sty, 12) == LS_MD_FENCE + 0);  /* ```lua is content */
+        CHECK(carryAfterLine(src, sty, 13) == LS_NORMAL);
     }
 
     /* ---------------- word tables: binary search needs them sorted -------- */

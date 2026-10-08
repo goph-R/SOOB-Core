@@ -79,7 +79,7 @@ enum {
 /* ---- carry state -------------------------------------------------------
  * Must stay below 'A'+state == 0x7F so the style buffer remains pure ASCII;
  * Fl_Text_Buffer is UTF-8 aware and a >=0x80 byte would confuse it.  That
- * makes LS_MAX = 62 a hard ceiling -- and it is reached exactly.
+ * makes LS_MAX = 62 a hard ceiling; 60 is in use, so two states are left.
  */
 #define LEX_MD_NSUB 11      /* fence sub-languages: none + 10, see lexMdFenceSub */
 enum {
@@ -106,7 +106,13 @@ enum {
     LS_PHP_BLOCK    = 55,   /*   ... inside a block comment there    */
     LS_PHP_DQ       = 56,   /*   ... inside a "string" there         */
     LS_PHP_SQ       = 57,   /*   ... inside a 'string' there         */
-    LS_MAX          = 58
+    /* A Markdown fence opened with 4+ ` (58) or 4+ ~ (59), so a ``` line
+     * inside does not close it -- the way a document SHOWS a fenced block.
+     * One state per character, not 2 x 11 like LS_MD_FENCE: there is no room
+     * left, so these blocks get no sub-language colouring, and 4 and 5+ share
+     * a bucket (a ````` block is closed by an inner ````). */
+    LS_MD_FENCE_LONG = 58,
+    LS_MAX          = 60
 };
 #define LS_LUA_MAXLEVEL 7
 
@@ -1298,6 +1304,41 @@ static int lexMdFenceSub(const char *s, int len)
 
 static int lexLine(int lang, int st, const char *s, int n, char *out);
 
+/* ---- emphasis delimiters, CommonMark's flanking rules ------------------
+ * A run of * or _ only opens emphasis if it is LEFT-flanking -- not followed
+ * by whitespace, and if followed by punctuation then preceded by whitespace
+ * or punctuation -- and only closes it if RIGHT-flanking, the mirror image.
+ * The line's start and end count as whitespace. So `a * b * c` stays plain,
+ * and so does an intraword _: a run both left- and right-flanking may open or
+ * close with * (2*3*4) but not with _ (FL_MENU_DIVIDER, snake_case), unless
+ * punctuation is on the outer side. UTF-8 bytes count as letters. */
+static int lexMdWs(const char *s, int p, int n)
+{
+    return p < 0 || p >= n || s[p] == ' ' || s[p] == '\t';
+}
+static int lexMdPunct(const char *s, int p, int n)
+{
+    return p >= 0 && p < n && s[p] > ' ' && s[p] < 0x7f &&
+           strchr("!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~", s[p]) != 0;
+}
+/* bit 1: may open, bit 2: may close -- for the run [p, p + run). */
+static int lexMdDelim(const char *s, int p, int run, int n)
+{
+    int b = p - 1, a = p + run, left, right, r = 0;
+    left  = !lexMdWs(s, a, n) &&
+            (!lexMdPunct(s, a, n) || lexMdWs(s, b, n) || lexMdPunct(s, b, n));
+    right = !lexMdWs(s, b, n) &&
+            (!lexMdPunct(s, b, n) || lexMdWs(s, a, n) || lexMdPunct(s, a, n));
+    if (s[p] == '*') {
+        if (left)  r |= 1;
+        if (right) r |= 2;
+    } else {
+        if (left  && (!right || lexMdPunct(s, b, n))) r |= 1;
+        if (right && (!left  || lexMdPunct(s, a, n))) r |= 2;
+    }
+    return r;
+}
+
 static void lexMdInline(const char *s, int i, int n, char *out)
 {
     while (i < n) {
@@ -1323,23 +1364,29 @@ static void lexMdInline(const char *s, int i, int n, char *out)
             i = e;
             continue;
         }
-        if (c == '*' && i + 1 < n && s[i + 1] == '*') {    /* **strong** */
-            int e = i + 2, ok = 0;
-            while (e + 1 < n) {
-                if (s[e] == '*' && s[e + 1] == '*') { e += 2; ok = 1; break; }
-                e++;
+        if (c == '*' || c == '_') {          /* *em* _em_ **strong** __strong__ */
+            int run = 1, want, e, end = -1;
+            while (i + run < n && (unsigned char)s[i + run] == c) run++;
+            want = run >= 2 ? 2 : 1;
+            if (lexMdDelim(s, i, run, n) & 1) {
+                for (e = i + run; e < n; ) {             /* first run that closes */
+                    int r = 1;
+                    if ((unsigned char)s[e] != c) { e++; continue; }
+                    while (e + r < n && (unsigned char)s[e + r] == c) r++;
+                    if (r >= want && (lexMdDelim(s, e, r, n) & 2)) {
+                        end = e + (r < run ? r : run);
+                        break;
+                    }
+                    e += r;
+                }
             }
-            if (!ok) e = n;
-            lexFill(out, i, e, LEX_STRONG);
-            i = e;
-            continue;
-        }
-        if (c == '*' || c == '_') {                        /* *em* / _em_ */
-            int e = i + 1, ok = 0;
-            while (e < n) { if ((unsigned char)s[e] == c) { e++; ok = 1; break; } e++; }
-            if (!ok) { out[i++] = LEX_CH(LEX_PLAIN); continue; }
-            lexFill(out, i, e, LEX_EM);
-            i = e;
+            if (end < 0) {                               /* literal: no italics */
+                lexFill(out, i, i + run, LEX_PLAIN);
+                i += run;
+                continue;
+            }
+            lexFill(out, i, end, want == 2 ? LEX_STRONG : LEX_EM);
+            i = end;
             continue;
         }
         if (c == '[') {                                    /* [text](url) */
@@ -1373,17 +1420,30 @@ static int lexMarkdownLine(int st, const char *s, int n, char *out)
 {
     int i = 0, k;
 
-    /* -- inside a fenced block -- */
-    if (st >= LS_MD_FENCE && st < LS_MD_FENCE + 2 * LEX_MD_NSUB) {
-        int f     = st - LS_MD_FENCE;          /* 0..21 */
-        int sub   = f % LEX_MD_NSUB;
-        char fc   = (f / LEX_MD_NSUB) ? '~' : '`';
+    /* -- inside a fenced block --
+     * A closing fence is the opening character, at least as many of it as
+     * opened the block, then nothing but blanks (CommonMark). That is what
+     * lets a ```` block SHOW a ``` block, and why ```lua inside a ``` block
+     * is content, not a close. Lengths beyond 3 cost a state each, so they
+     * are bucketed: 3, or 4 and up (see LS_MD_FENCE_LONG). */
+    if ((st >= LS_MD_FENCE && st < LS_MD_FENCE + 2 * LEX_MD_NSUB) ||
+        st == LS_MD_FENCE_LONG || st == LS_MD_FENCE_LONG + 1) {
+        int  isLong = st >= LS_MD_FENCE_LONG;
+        int  f      = isLong ? 0 : st - LS_MD_FENCE;          /* 0..21 */
+        int  sub    = f % LEX_MD_NSUB;
+        char fc;
+        if (isLong) fc = (st == LS_MD_FENCE_LONG) ? '`' : '~';
+        else        fc = (f / LEX_MD_NSUB) ? '~' : '`';
         while (i < n && (s[i] == ' ' || s[i] == '\t')) i++;
         k = i;
         while (k < n && s[k] == fc) k++;
-        if (k - i >= 3) {                       /* closing fence */
-            lexFill(out, 0, n, LEX_MARKER);
-            return LS_NORMAL;
+        if (k - i >= (isLong ? 4 : 3)) {
+            int e = k;
+            while (e < n && (s[e] == ' ' || s[e] == '\t')) e++;
+            if (e >= n) {                       /* closing fence */
+                lexFill(out, 0, n, LEX_MARKER);
+                return LS_NORMAL;
+            }
         }
         if (lexMdSubLang[sub] == LEX_LANG_PHP) { lexCfLine(&lexCfPhp, LS_NORMAL, s, n, out); return st; }
         if (sub) { lexLine(lexMdSubLang[sub], LS_NORMAL, s, n, out); return st; }
@@ -1406,6 +1466,8 @@ static int lexMarkdownLine(int st, const char *s, int n, char *out)
             if (e > b) sub = lexMdFenceSub(s + b, e - b);
             lexFill(out, 0, k, LEX_MARKER);
             lexFill(out, k, n, LEX_TYPE);       /* the language tag */
+            if (k - i >= 4)                     /* no room for a sub-language */
+                return LS_MD_FENCE_LONG + ((fc == '~') ? 1 : 0);
             return LS_MD_FENCE + ((fc == '~') ? LEX_MD_NSUB : 0) + sub;
         }
     }
