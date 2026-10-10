@@ -69,6 +69,11 @@ inline void fl_message_font(Fl_Font f, Fl_Fontsize s) {
 FL_EXPORT void fl_message_hotspot(int enable);
 FL_EXPORT int fl_message_hotspot(void);
 
+// SOOB patch: called with the sized message window just before it is shown,
+// to position() it -- e.g. centred over the app. Overrides the hotspot; 0 off.
+class Fl_Window;
+FL_EXPORT void fl_message_place(void (*cb)(Fl_Window *));
+
 FL_EXPORT void fl_message_title(const char *title);
 FL_EXPORT void fl_message_title_default(const char *title);
 

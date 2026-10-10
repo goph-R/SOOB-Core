@@ -45,6 +45,7 @@ static Fl_Button *button[3];
 static Fl_Input *input;
 static int ret_val;     // button return value: 0, 1, 2
 static int win_closed;  // window close flag (-1 = Escape, -2 = close button)
+static void (*message_place_cb)(Fl_Window *) = 0;  // SOOB patch: fl_message_place()
 static const char *iconlabel = "?";
 static const char *message_title_default;
 Fl_Font fl_message_font_ = FL_HELVETICA;
@@ -245,7 +246,9 @@ static int innards(const char* fmt, va_list ap,
 
   if (button[1]->visible() && !input->visible())
     button[1]->take_focus();
-  if (enableHotspot)
+  if (message_place_cb)                       // SOOB patch: see fl_message_place()
+    message_place_cb(message_form);
+  else if (enableHotspot)
     message_form->hotspot(button[0]);
   if (b0 && Fl_Widget::label_shortcut(b0))
     button[0]->shortcut(0);
@@ -622,6 +625,12 @@ void fl_message_hotspot(int enable) {
  */
 int fl_message_hotspot(void) {
   return enableHotspot;
+}
+
+// SOOB patch (docs/editor-fltk-win98.md): an app-supplied placement for the
+// message window, called once it has its final size, just before show().
+void fl_message_place(void (*cb)(Fl_Window *)) {
+  message_place_cb = cb;
 }
 
 /** Sets the title of the dialog window used in many common dialogs.

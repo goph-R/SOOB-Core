@@ -542,6 +542,44 @@ fltk98
 then `e98` (SOOB-Code) or `ed98` (SOOB-Engine). For the Win10 library, run
 `build_fltk_win10.bat` -- it has no per-object sentinel to clear.
 
+## Local FLTK patch: message box placement hook
+
+**Re-apply if FLTK is ever upgraded** -- or switch to 1.4's
+`fl_message_position()`, which covers the same need.
+
+FLTK 1.3 puts the `fl_alert` / `fl_choice` / `fl_input` window either under
+the mouse (`fl_message_hotspot(1)`, the default) or wherever the window
+manager likes. Neither is "centred over the app", and nothing outside
+`fl_ask.cxx` can move it: the window is static to that file, and its final
+size is only known inside `innards()`, after the text has been measured.
+
+The patch adds one hook, declared in `FL/fl_ask.H`:
+
+```c
+FL_EXPORT void fl_message_place(void (*cb)(Fl_Window *));
+```
+
+When set, `innards()` calls it with the sized message window just before
+`show()`, in place of the hotspot. `fltk_ui/edit_place.h`'s
+`editPlaceDialog()` is the intended callback: it centres a window's frame
+over the app and keeps it inside the screen's work area, and the apps use it
+for their own dialogs too, so all of them land the same way. Unset (0), the
+behaviour is stock.
+
+A new function, nothing changed in a structure or an existing signature, so
+the ABI is untouched -- but the library must be rebuilt, and an app that
+calls `fl_message_place()` will not link against an old one:
+
+```
+del vendor\fltk-1.3\FL\lib\o\fl_ask.o
+del vendor\fltk-1.3\FL\lib\fltkok.tag
+fltk98
+```
+
+For the Win10 library, `build_fltk_win10.bat` with `raw\obj\fltk_w10`
+deleted -- or recompile just `fl_ask.cxx` with that script's flags and
+`ar rcs` it into `lib_w10\libfltk.a`, which replaces the member in place.
+
 ## Local FLTK patch: GL device context (defensive)
 
 `vendor/fltk-1.3/FL/src/Fl_Gl_Choice.cxx` carries a one-line fallback. It is *not*
