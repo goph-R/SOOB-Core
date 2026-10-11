@@ -19,6 +19,8 @@
  *               geometry and could switch to a different tab. With a
  *               closeCallback(), each tab gets an X (hover-highlighted) and
  *               middle-click closes; both fire on release, like a button.
+ *               With a menuCallback(), a right-click on a tab calls it (the
+ *               owner pops up its own menu) without switching tabs.
  *
  * Everything below the row -- child management, value(), resizing, keyboard
  * -- stays stock Fl_Tabs. Row height comes from the children's y offset, as
@@ -46,7 +48,7 @@ class CodeTabs : public Fl_Tabs {
 public:
     CodeTabs(int X, int Y, int W, int H)
         : Fl_Tabs(X, Y, W, H), mFirstX(0), mCloseFn(0), mCloseData(0),
-          mHoverClose(-1), mPressClose(-1) {}
+          mMenuFn(0), mMenuData(0), mHoverClose(-1), mPressClose(-1) {}
 
     /* Start the first tab block at a column -- e.g. the edge of the editor's
        line-number gutter, so the tabs sit over the text area. px is measured
@@ -60,6 +62,15 @@ public:
         mCloseFn = fn;
         mCloseData = data;
         redraw();
+    }
+
+    /* Right-click on a tab: fn(child, data), called on the press with the
+       event still current, so fn can popup() at Fl::event_x() / event_y().
+       Same signature as the close callback. */
+    void menuCallback(CodeTabsCloseFn fn, void *data)
+    {
+        mMenuFn = fn;
+        mMenuData = data;
     }
 
     /* Row inset before the first tab block. */
@@ -165,6 +176,10 @@ public:
         if ((e == FL_PUSH || e == FL_DRAG || e == FL_RELEASE) && inRow) {
             if (e == FL_PUSH) {
                 int i = tabAt(Fl::event_x());
+                if (Fl::event_button() == FL_RIGHT_MOUSE) {
+                    if (mMenuFn && i >= 0) mMenuFn(child(i), mMenuData);
+                    return 1;              /* never switches tabs */
+                }
                 if (mCloseFn && i >= 0 &&
                     (Fl::event_button() == FL_MIDDLE_MOUSE ||
                      closeAt(Fl::event_x(), Fl::event_y()) == i)) {
@@ -227,7 +242,9 @@ private:
     int mFirstX;
     CodeTabsCloseFn mCloseFn;
     void *mCloseData;
-    int mHoverClose;              /* tab whose X is under the mouse, or -1 */
+    CodeTabsCloseFn mMenuFn;
+    void *mMenuData;
+    int mHoverClose;             /* tab whose X is under the mouse, or -1 */
     int mPressClose;              /* tab whose close is being clicked, or -1 */
 
     void drawClose(int i, Fl_Color bg, Fl_Color fg)
