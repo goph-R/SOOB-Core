@@ -525,8 +525,13 @@ static void codeFoldersTheme(CodeFolders *t)
                                              take the tree's own color() */
     t->item_labelsize(FL_NORMAL_SIZE);    /* editDpiInit() already scaled it */
 
-    t->showroot(1);                       /* the root IS the sidebar's title */
-    t->root_label("Folders");
+    /* The root is hidden: the listed folders ARE the top level, so they sit
+       flush left with no wasted indent, and there is no single row that can
+       collapse the whole sidebar by accident. It still exists -- every root
+       is one of its children, which is what rootOf() walks up to -- and it
+       must stay open or its children would not be drawn. */
+    t->showroot(0);
+    t->root_label("Folders");             /* never drawn; the widget's name */
     t->showcollapse(1);
     t->selectmode(FL_TREE_SELECT_SINGLE);
     t->sortorder(FL_TREE_SORT_NONE);      /* populate() sorts, folders first */
@@ -535,7 +540,7 @@ static void codeFoldersTheme(CodeFolders *t)
     /* Fl_Tree_Prefs' metrics are hard 96-DPI pixels and nothing scales them:
        the tree is built after editDpiScaleTree(), and that walk only moves
        geometry anyway. */
-    t->marginleft(editDpi(6));
+    t->marginleft(editDpi(4));            /* less is needed with no root row */
     t->margintop(editDpi(3));
     t->marginbottom(editDpi(4));          /* the 20px default is dead space */
     t->usericonmarginleft(editDpi(3));
