@@ -266,4 +266,108 @@ static int codeWriteText(const char *path, const char *text, int n, int enc, int
     return ok ? 0 : 1;
 }
 
+/* ---- will the editor take this file? -------------------------------------
+ *
+ * The Folders tree lists every entry in a folder, so it has to decide per
+ * file whether a double-click opens a tab or goes to the shell -- and draw
+ * the ones it will not open in a dimmed colour.
+ *
+ * lexLangFromPath() cannot answer this. It picks a HIGHLIGHTER, and its
+ * LEX_LANG_TEXT fallback covers both ".txt", which opens perfectly well, and
+ * "kernel32.dll", which does not. The two questions are unrelated.
+ *
+ * NAME ONLY, no I/O: this runs once per directory entry while the tree is
+ * being built, and an fopen() per entry would make a 400-file folder on a
+ * Win98 share painful. So no sniffing for NUL bytes, no size check.
+ *
+ * DENY WINS, AND THE DEFAULT IS NO. An unknown extension is reported as not
+ * openable, because the cost of being wrong is asymmetric: refusing a text
+ * file is a shrug and a trip through File > Open, while accepting a 40 MB
+ * .iso means codeReadText() mallocs all of it and Fl_Text_Buffer lays out
+ * several million lines of binary. Neither it nor CodeEditor::loadFile() has
+ * a size cap or a binary check -- this list is the gate.
+ *
+ * To teach the editor a new extension, add it to codeOpenExt and nowhere
+ * else. Keep CODE_FILTER_WIN32 in edit_filedlg.h in step if the Open dialog
+ * should offer it too.
+ */
+
+#define CODE_NLIST(a) ((int)(sizeof(a) / sizeof((a)[0])))
+
+/* Case-insensitive whole-string compare. ASCII folding only, which is all an
+   extension or a bare filename can portably be. */
+static int codeNameEqI(const char *a, const char *b)
+{
+    for (; *a && *b; a++, b++) {
+        int x = (unsigned char)*a, y = (unsigned char)*b;
+        if (x >= 'A' && x <= 'Z') x += 32;
+        if (y >= 'A' && y <= 'Z') y += 32;
+        if (x != y) return 0;
+    }
+    return *a == '\0' && *b == '\0';
+}
+
+/* Linear, not a lexInTable() binary search: that would tie this header to
+   edit_lex.h and impose a sorted-table invariant on three lists people will
+   want to edit. A few dozen compares of three-character strings per file is
+   nothing next to the directory read that produced the name. */
+static int codeNameInList(const char *const *tab, int n, const char *s)
+{
+    int i;
+    for (i = 0; i < n; i++) if (codeNameEqI(tab[i], s)) return 1;
+    return 0;
+}
+
+/* Known binary. Checked first, so nothing below can resurrect one. */
+static const char *const codeBinExt[] = {
+    "7z", "a", "avi", "bin", "bmp", "bz2", "cab", "chm", "class", "com",
+    "cur", "dat", "db", "dll", "doc", "docx", "dylib", "exe", "flac", "fon",
+    "gif", "gz", "ico", "img", "iso", "jar", "jpeg", "jpg", "lib", "mdb",
+    "mid", "mkv", "mov", "mp3", "mp4", "mpg", "msi", "o", "obj", "ocx",
+    "odt", "ogg", "otf", "pcx", "pdb", "pdf", "png", "ppt", "pptx", "psd",
+    "pyc", "pyo", "rar", "res", "so", "swf", "sys", "tar", "tga", "tif",
+    "tiff", "ttf", "wav", "webp", "wmv", "xcf", "xls", "xlsx", "zip"
+};
+
+/* Text. Everything lexLangFromPath() knows, plus the plain-text extensions
+   that legitimately land on its LEX_LANG_TEXT fallback. */
+static const char *const codeOpenExt[] = {
+    "ash", "asc", "bash", "bat", "c", "cc", "cfg", "cjs", "cmake", "cmd",
+    "conf", "cpp", "csproj", "css", "csv", "cxx", "diff", "dpr", "frag",
+    "glsl", "h", "hh", "hpp", "htm", "html", "hxx", "inc", "incl", "inf",
+    "ini", "inl", "java", "js", "json", "jsx", "log", "lpr", "lua",
+    "markdown", "md", "mdown", "mjs", "mkd", "nfo", "pas", "patch", "php",
+    "phtml", "pp", "props", "py", "pyw", "qrc", "rc", "rst", "sh", "sql",
+    "svg", "tcl", "tex", "tmx", "toml", "ts", "tsv", "tsx", "txt", "vert",
+    "xhtml", "xml", "xsd", "xsl", "xslt", "yaml", "yml"
+};
+
+/* No extension at all, but text by convention. Matched against the WHOLE
+   name, which is also how the leading-dot names below are caught. */
+static const char *const codeOpenBare[] = {
+    ".bashrc", ".editorconfig", ".gitattributes", ".gitignore",
+    ".gitmodules", "authors", "changelog", "changes", "copying", "install",
+    "licence", "license", "makefile", "news", "readme", "todo"
+};
+
+/* 1 if a double-click should open `name` in a tab. Pass the base name, not
+   a path -- a directory called "x.exe" is the caller's problem, not ours. */
+static int codeFileOpenableName(const char *name)
+{
+    const char *dot;
+
+    if (!name || !*name) return 0;
+    dot = strrchr(name, '.');
+    /* No dot, or a dot only at the front (".gitignore" is a NAME, not an
+       extension): the whole thing has to be in the bare list. */
+    if (!dot || dot == name)
+        return codeNameInList(codeOpenBare, CODE_NLIST(codeOpenBare), name);
+    dot++;
+    if (codeNameInList(codeBinExt,  CODE_NLIST(codeBinExt),  dot)) return 0;
+    if (codeNameInList(codeOpenExt, CODE_NLIST(codeOpenExt), dot)) return 1;
+    /* "CMakeLists.txt" has an extension AND is in the bare list; so would
+       any future "Something.cfg"-shaped convention name. */
+    return codeNameInList(codeOpenBare, CODE_NLIST(codeOpenBare), name);
+}
+
 #endif /* EDIT_FILEIO_H */

@@ -959,6 +959,41 @@ int main(void)
             }
         }
 
+        {   /* ---- codeFileOpenableName: what the Folders tree will open ----
+             * The tree draws a file dimmed and shells out when this says no,
+             * so a wrong answer here is a file the editor appears unable to
+             * open. The rule is deny-list, then allow-list, then default NO. */
+            CHECK(codeFileOpenableName("main.lua"));
+            CHECK(codeFileOpenableName("Build.BAT"));        /* case-blind */
+            CHECK(codeFileOpenableName("notes.txt"));        /* text, no lexer */
+            CHECK(codeFileOpenableName("README.md"));
+            CHECK(codeFileOpenableName("Makefile"));         /* no extension */
+            CHECK(codeFileOpenableName("readme"));
+            CHECK(codeFileOpenableName(".gitignore"));       /* a NAME, not an ext */
+            CHECK(codeFileOpenableName("CMakeLists.txt"));   /* ext wins, and is ok */
+            CHECK(codeFileOpenableName("a.b.json"));         /* last dot only */
+
+            CHECK(!codeFileOpenableName("game.exe"));
+            CHECK(!codeFileOpenableName("photo.PNG"));
+            CHECK(!codeFileOpenableName("lib.o"));
+            CHECK(!codeFileOpenableName("archive.tar.gz"));  /* "gz", not "tar.gz" */
+            CHECK(!codeFileOpenableName("soobpuzzle"));      /* no ext, unknown */
+            CHECK(!codeFileOpenableName("data.wibble"));     /* unknown ext */
+            CHECK(!codeFileOpenableName("trailing."));       /* empty extension */
+            CHECK(!codeFileOpenableName(""));
+            CHECK(!codeFileOpenableName(0));
+
+            /* Every deny entry must beat every allow entry, whatever order
+               the two lists are edited into in future. */
+            {
+                int i, k, clash = 0;
+                for (i = 0; i < CODE_NLIST(codeBinExt); i++)
+                    for (k = 0; k < CODE_NLIST(codeOpenExt); k++)
+                        if (codeNameEqI(codeBinExt[i], codeOpenExt[k])) clash++;
+                CHECK(clash == 0);
+            }
+        }
+
         delete T;
         delete S;
     }

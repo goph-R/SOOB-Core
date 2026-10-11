@@ -204,4 +204,99 @@ static int codeFileSaveDialog(char *out, int outlen, const char *initialDir,
 #endif
 }
 
+/* ---- folder picker -------------------------------------------------------
+ *
+ * The Folders sidebar needs a directory, not a file, and the note at the top
+ * of this header is exactly why Fl_Native_File_Chooser is no help: it reaches
+ * for SHBrowseForFolderW. The ANSI SHBrowseForFolderA, though, is real on
+ * Windows 98 -- it is only the wide half of the shell that is stubbed -- so
+ * the genuine "Browse for Folder" dialog is one call away, and the app gets
+ * the same period look its Open and Save dialogs already have.
+ *
+ * TWO FLAGS NOT SET, DELIBERATELY
+ *
+ *   BIF_NEWDIALOGSTYLE  -- the resizable dialog with a New Folder button.
+ *                          Needs shell32 5.0 (Windows 2000) and a
+ *                          CoInitialize'd thread; Win98 gold ships 4.72 and
+ *                          answers with no dialog at all.
+ *   BIF_USENEWUI        -- the same thing wearing a different name.
+ *
+ * The starting folder is not a field but a message: the dialog asks us where
+ * to begin by calling back with BFFM_INITIALIZED, and we answer with
+ * BFFM_SETSELECTIONA. If that callback ever fails to compile on an old SDK,
+ * dropping bi.lpfn costs only the starting position.
+ */
+#if defined(WIN32) || defined(_WIN32)
+
+#include <shlobj.h>
+
+/* MinGW 3.4's w32api predates some of these. All are fixed constants. */
+#ifndef BIF_RETURNONLYFSDIRS
+#  define BIF_RETURNONLYFSDIRS 0x0001
+#endif
+#ifndef BFFM_INITIALIZED
+#  define BFFM_INITIALIZED 1
+#endif
+#ifndef BFFM_SETSELECTIONA
+#  define BFFM_SETSELECTIONA (WM_USER + 102)
+#endif
+
+static int CALLBACK codeFolderDlgProc(HWND hw, UINT msg, LPARAM lp, LPARAM data)
+{
+    (void)lp;
+    if (msg == BFFM_INITIALIZED && data)
+        SendMessageA(hw, BFFM_SETSELECTIONA, (WPARAM)TRUE, data);
+    return 0;
+}
+
+#endif /* WIN32 */
+
+/* Pick a folder. Returns 1 and fills `out` with a path, or 0 if cancelled. */
+static int codeFolderDialog(char *out, int outlen, const char *initialDir)
+{
+#if defined(WIN32) || defined(_WIN32)
+    BROWSEINFOA bi;
+    LPITEMIDLIST pidl;
+    char name[MAX_PATH], start[MAX_PATH];
+    int ok = 0;
+
+    if (!out || outlen <= 0) return 0;
+    out[0] = '\0';
+    name[0] = '\0';
+
+    memset(&bi, 0, sizeof(bi));
+    bi.hwndOwner      = (HWND)codeFileDlgOwner;   /* modal to us: see above */
+    bi.pszDisplayName = name;                     /* the leaf NAME, not a path */
+    bi.lpszTitle      = "Add a folder to the sidebar";
+    bi.ulFlags        = BIF_RETURNONLYFSDIRS;
+    if (initialDir && *initialDir) {
+        strncpy(start, initialDir, sizeof(start) - 1);
+        start[sizeof(start) - 1] = '\0';
+        bi.lpfn   = codeFolderDlgProc;
+        bi.lParam = (LPARAM)start;
+    }
+
+    pidl = SHBrowseForFolderA(&bi);
+    if (!pidl) return 0;                          /* cancelled */
+    /* pszDisplayName is only the leaf ("Projects"); the full path has to be
+       resolved out of the item ID list. */
+    if (SHGetPathFromIDListA(pidl, name)) {
+        strncpy(out, name, (size_t)(outlen - 1));
+        out[outlen - 1] = '\0';
+        ok = out[0] != '\0';
+    }
+    /* The PIDL belongs to the shell allocator. CoTaskMemFree is the
+       documented stand-in for SHGetMalloc()->Free() and needs no
+       CoInitialize; ole32 is already on the link line. */
+    CoTaskMemFree((LPVOID)pidl);
+    return ok;
+#else
+    const char *p = fl_dir_chooser("Add a folder to the sidebar", initialDir, 0);
+    if (!p || !out || outlen <= 0) { if (out && outlen > 0) out[0] = '\0'; return 0; }
+    strncpy(out, p, (size_t)(outlen - 1));         /* p is STATIC storage */
+    out[outlen - 1] = '\0';
+    return 1;
+#endif
+}
+
 #endif /* EDIT_FILEDLG_H */
