@@ -289,6 +289,22 @@ static void codeFileJoin(char *out, int outlen, const char *dir, const char *nam
     sprintf(out, "%s%s%s", dir, s, name);
 }
 
+/* Is `path` inside `dir`? Compares on a SEPARATOR BOUNDARY, so "/proj" does
+   not swallow "/project2", and tolerates a trailing separator on dir ("C:\\").
+   Case-insensitive where the filesystem is. */
+static int codeFileUnder(const char *path, const char *dir)
+{
+    int n = (int)strlen(dir);
+    while (n > 0 && (dir[n - 1] == '/' || dir[n - 1] == '\\')) n--;
+    if (n <= 0 || !path[0]) return 0;
+#if defined(WIN32) || defined(_WIN32)
+    if (_strnicmp(path, dir, (size_t)n) != 0) return 0;
+#else
+    if (strncmp(path, dir, (size_t)n) != 0) return 0;
+#endif
+    return path[n] == '/' || path[n] == '\\';
+}
+
 /* Hidden, system, and the version-control directories nobody wants to page
    through or search. On Windows "hidden" is the file ATTRIBUTE, not a
    leading dot -- ".gitignore" is an ordinary visible file there and should
