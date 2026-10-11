@@ -268,23 +268,13 @@ public:
     }
 
     /* _vscroll / _hscroll are protected on Fl_Tree, so this can only be done
-       from a subclass -- there is no public accessor. Fl_Scrollbar draws its
-       trough with box() in color() and the knob and arrows with slider() in
-       selection_color(), with the arrow glyphs in labelcolor(). */
-    void themeScrollbars(Fl_Color trough, Fl_Color knob, Fl_Color arrow)
+       from a subclass -- there is no public accessor. The look itself comes
+       from codeThemeScrollbar() in edit_code.h, which the editor uses too:
+       these two sit side by side, so they must not drift. */
+    void themeScrollbars(void)
     {
-        Fl_Scrollbar *s[2];
-        int k;
-        s[0] = _vscroll;
-        s[1] = _hscroll;
-        for (k = 0; k < 2; k++) {
-            if (!s[k]) continue;
-            s[k]->box(FL_FLAT_BOX);
-            s[k]->slider(FL_FLAT_BOX);
-            s[k]->color(trough);
-            s[k]->selection_color(knob);
-            s[k]->labelcolor(arrow);
-        }
+        codeThemeScrollbar(_vscroll);
+        codeThemeScrollbar(_hscroll);
     }
 
     /* Free every FoldItem in a subtree, the item's OWN included. MUST run
@@ -561,7 +551,7 @@ static void codeFoldersTheme(CodeFolders *t)
     gFoldIconFile    = editDpiImage(new Fl_Pixmap(foldFileXpm));
     gFoldIconFileDim = editDpiImage(new Fl_Pixmap(foldFileDimXpm));
 
-    t->themeScrollbars(CODE_COL_BG, CODE_COL_SEL, CODE_COL_TAB_OFF);
+    t->themeScrollbars();
 
     /* The root was constructed by Fl_Tree's own constructor, before any of
        the above, so it still carries FLTK's defaults. */

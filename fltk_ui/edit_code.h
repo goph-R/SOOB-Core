@@ -41,6 +41,7 @@
 
 #include <FL/Fl.H>
 #include <FL/Fl_Text_Editor.H>
+#include <FL/Fl_Scrollbar.H>
 #include <FL/Fl_Text_Buffer.H>
 #include <FL/Fl_Menu_Item.H>
 #include <FL/fl_draw.H>
@@ -121,6 +122,20 @@ static void codeTrace(const char *fmt, ...)
 /* Bracket / tag pair outline (edit_match.h): the line-number tint, so it
  * reads as a marker, not as another syntax colour. Unmatched: CODE_COL_ERROR. */
 #define CODE_COL_MATCH     CODE_RGB(0x9a, 0xa3, 0xc9)
+
+/* The dark theme's scrollbar, shared by the editor and the Folders tree so
+ * the two cannot drift apart. Fl_Scrollbar draws its trough with box() in
+ * color(), the knob and the two arrow buttons with slider() in
+ * selection_color(), and the arrow glyphs in labelcolor(). */
+static void codeThemeScrollbar(Fl_Scrollbar *s)
+{
+    if (!s) return;
+    s->box(FL_FLAT_BOX);
+    s->slider(FL_FLAT_BOX);
+    s->color(CODE_COL_BG);
+    s->selection_color(CODE_COL_SEL);
+    s->labelcolor(CODE_COL_TAB_OFF);
+}
 
 #ifndef CODE_FONTSIZE
 #define CODE_FONTSIZE 14
@@ -585,8 +600,13 @@ public:
         linenumber_fgcolor(CODE_COL_LINENO);
         linenumber_align(FL_ALIGN_RIGHT);
 
-        /* Scrollbars deliberately left at the FLTK default -- they read as
-         * part of the window chrome, not the document. */
+        /* Scrollbars were left at the FLTK default here for a long time, on
+         * the grounds that they read as window chrome rather than as part of
+         * the document. The Folders sidebar ended that: it puts a themed
+         * scrollbar immediately beside this one, and a grey Win98 bevel next
+         * to a dark one reads as a bug rather than as chrome. */
+        codeThemeScrollbar(mVScrollBar);
+        codeThemeScrollbar(mHScrollBar);
 
         /* No "unfinished style" mechanism: we keep the style buffer complete at
          * all times, so pass slot 0 (never emitted -- LEX_PLAIN is 'A') and a
