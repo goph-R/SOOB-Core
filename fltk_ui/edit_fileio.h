@@ -266,6 +266,46 @@ static int codeWriteText(const char *path, const char *text, int n, int enc, int
     return ok ? 0 : 1;
 }
 
+/* ---- path and directory-entry helpers ------------------------------------
+ * Shared by the Folders tree and the folder search, which must agree on
+ * what a path looks like and on what is not worth showing.
+ */
+
+/* dir + separator + name, unless the path already ends in one -- "C:\\" and
+   "/" do. Writes "" rather than truncating if it will not fit: a half path
+   that still looks like a path is worse than an obviously empty one. */
+static void codeFileJoin(char *out, int outlen, const char *dir, const char *name)
+{
+    int n = (int)strlen(dir);
+    int sep = n > 0 && (dir[n - 1] == '/' || dir[n - 1] == '\\');
+#if defined(WIN32) || defined(_WIN32)
+    const char *s = sep ? "" : "\\";
+#else
+    const char *s = sep ? "" : "/";
+#endif
+    if (outlen <= 0) return;
+    out[0] = '\0';
+    if (n + (int)strlen(s) + (int)strlen(name) >= outlen) return;
+    sprintf(out, "%s%s%s", dir, s, name);
+}
+
+/* Hidden, system, and the version-control directories nobody wants to page
+   through or search. On Windows "hidden" is the file ATTRIBUTE, not a
+   leading dot -- ".gitignore" is an ordinary visible file there and should
+   be listed. */
+static int codeFileHidden(const char *full, const char *name)
+{
+#if defined(WIN32) || defined(_WIN32)
+    DWORD a = GetFileAttributesA(full);
+    if (a != 0xFFFFFFFFUL && (a & (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM)))
+        return 1;
+#else
+    (void)full;
+    if (name[0] == '.' && strcmp(name, ".") && strcmp(name, "..")) return 1;
+#endif
+    return !strcmp(name, ".git") || !strcmp(name, ".svn") || !strcmp(name, ".hg");
+}
+
 /* ---- will the editor take this file? -------------------------------------
  *
  * The Folders tree lists every entry in a folder, so it has to decide per

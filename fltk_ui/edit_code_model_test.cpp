@@ -30,6 +30,7 @@
 
 #include <FL/Fl_Text_Buffer.H>
 #include "edit_code.h"
+#include "edit_grep.h"
 #include "edit_find.h"
 #include "edit_match.h"
 #include "edit_indent.h"
@@ -992,6 +993,38 @@ int main(void)
                         if (codeNameEqI(codeBinExt[i], codeOpenExt[k])) clash++;
                 CHECK(clash == 0);
             }
+        }
+
+        {   /* ---- edit_grep.h: the pure half of Find in Folder --------- */
+            char *r;
+            int n, lineNo;
+
+            CHECK(codeGrepCount("aXbXc", "X", 1) == 2);
+            CHECK(codeGrepCount("aXbXc", "x", 1) == 0);      /* case matters */
+            CHECK(codeGrepCount("aXbXc", "x", 0) == 2);      /* ...and not */
+            CHECK(codeGrepCount("aaaa", "aa", 1) == 2);      /* non-overlapping */
+            CHECK(codeGrepCount("abc", "", 1) == 0);         /* no empty needle */
+
+            r = codeGrepReplace("aXbXc", "X", "YY", 1, &n);
+            CHECK(r && !strcmp(r, "aYYbYYc") && n == 2); free(r);
+
+            /* A replacement containing the needle must not loop: the scan
+               resumes past what it just wrote. */
+            r = codeGrepReplace("aa", "a", "aa", 1, &n);
+            CHECK(r && !strcmp(r, "aaaa") && n == 2); free(r);
+
+            /* Shrinking, and the count agreeing with codeGrepCount. */
+            r = codeGrepReplace("xxAxx", "xx", "y", 0, &n);
+            CHECK(r && !strcmp(r, "yAy") && n == 2); free(r);
+
+            CHECK(codeGrepReplace("abc", "zz", "y", 1, &n) == 0 && n == 0);
+
+            /* The display line: 1-based number, leading indent dropped,
+               stops at the newline. */
+            r = codeGrepLineAt("one\n\ttwo match\nthree\n", 10, &lineNo);
+            CHECK(r && !strcmp(r, "two match") && lineNo == 2); free(r);
+            r = codeGrepLineAt("first\n", 0, &lineNo);
+            CHECK(r && !strcmp(r, "first") && lineNo == 1); free(r);
         }
 
         delete T;

@@ -198,22 +198,6 @@ static const char *foldBaseName(const char *p)
     return s ? s + 1 : p;
 }
 
-static void foldJoin(char *out, int outlen, const char *dir, const char *name)
-{
-    int n = (int)strlen(dir);
-    /* "C:\" and "/" already end in a separator; everything else needs one. */
-    int sep = n > 0 && (dir[n - 1] == '/' || dir[n - 1] == '\\');
-#if defined(WIN32) || defined(_WIN32)
-    const char *s = sep ? "" : "\\";
-#else
-    const char *s = sep ? "" : "/";
-#endif
-    if (outlen <= 0) return;
-    out[0] = '\0';
-    if (n + (int)strlen(s) + (int)strlen(name) >= outlen) return;  /* too long */
-    sprintf(out, "%s%s%s", dir, s, name);
-}
-
 static int foldPathEq(const char *a, const char *b)
 {
 #if defined(WIN32) || defined(_WIN32)
@@ -221,22 +205,6 @@ static int foldPathEq(const char *a, const char *b)
 #else
     return strcmp(a, b) == 0;
 #endif
-}
-
-/* Hidden, system, and the version-control directories nobody wants to page
-   through. On Windows "hidden" is the ATTRIBUTE, not a leading dot --
-   ".gitignore" is an ordinary visible file there and should be listed. */
-static int foldSkip(const char *full, const char *name)
-{
-#if defined(WIN32) || defined(_WIN32)
-    DWORD a = GetFileAttributesA(full);
-    if (a != 0xFFFFFFFFUL && (a & (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM)))
-        return 1;
-#else
-    (void)full;
-    if (name[0] == '.' && strcmp(name, ".") && strcmp(name, "..")) return 1;
-#endif
-    return !strcmp(name, ".git") || !strcmp(name, ".svn") || !strcmp(name, ".hg");
 }
 
 /* ---- the widget ---------------------------------------------------------- */
@@ -342,6 +310,35 @@ public:
         redraw();
     }
 
+    /* Re-read a directory from disk. Nothing here can notice a change on
+       its own -- there is no file watching on 9x and polling a share would
+       be worse than the problem -- so this is the manual equivalent.
+       Given a file, refreshes the folder holding it, which is what someone
+       right-clicking a stale file actually means. Anything expanded
+       underneath closes: that is the honest result of reading it again. */
+    void refresh(Fl_Tree_Item *it)
+    {
+        FoldItem *f;
+        int wasOpen;
+
+        if (!it) return;
+        if (!isDirOf(it)) it = it->parent();
+        f = it ? (FoldItem *)it->user_data() : 0;
+        if (!f || !f->isDir) return;            /* the hidden root has none */
+        wasOpen = it->is_open();
+        freeChildren(it);
+        clear_children(it);
+        f->loaded = 0;
+        if (wasOpen) {
+            populate(it);
+            it->open();                         /* clear_children may close it */
+        } else {
+            add(it, "");                        /* a fresh [+] stub */
+            close(it, 0);
+        }
+        redraw();
+    }
+
     /* Read a directory in, the first time it is opened. */
     void populate(Fl_Tree_Item *it)
     {
@@ -377,8 +374,8 @@ public:
                 strcpy(name, list[k]->d_name);
                 if (isDir) name[len - 1] = '\0';
                 if (!name[0] || !strcmp(name, ".") || !strcmp(name, "..")) continue;
-                foldJoin(child, (int)sizeof(child), f->path, name);
-                if (!child[0] || foldSkip(child, name)) continue;
+                codeFileJoin(child, (int)sizeof(child), f->path, name);
+                if (!child[0] || codeFileHidden(child, name)) continue;
                 addEntry(it, child, name, isDir);
             }
         }
