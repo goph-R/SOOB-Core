@@ -202,7 +202,9 @@ static int codeGrepFile(CodeGrep *g, const char *path, const char *needle,
     char *text, *line;
 
     text = codeGrepOpenText ? codeGrepOpenText(path) : 0;
-    if (!text) text = codeReadText(path, &enc, &crlf);
+    /* No trunc out-param: a file that stops at a NUL is still searchable up
+       to there, and this only ever READS. The on-disk replace does ask. */
+    if (!text) text = codeReadText(path, &enc, &crlf, 0);
     if (!text) return 1;                       /* unreadable: not an error */
     g->scanned++;
     len  = (int)strlen(text);

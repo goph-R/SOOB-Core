@@ -1027,6 +1027,51 @@ int main(void)
             CHECK(r && !strcmp(r, "first") && lineNo == 1); free(r);
         }
 
+        /* ---- codeReadText / codeFileSniff: the truncation flag ----------
+         * A NUL byte ends the text codeReadText() returns, so a document read
+         * from such a file is only the front of it and must never be saved
+         * back over it. Both the reader's *trunc and the Folders tree's
+         * pre-open sniff have to say so, or "Open as Text" silently destroys
+         * the next binary file someone saves. File-backed rather than pure,
+         * but a temp file in the cwd is a cheap price for pinning THAT. */
+        {
+            const char *tmp = "ecmtest-trunc.tmp";
+            const char bin[] = "head\n\0tail\n";     /* 11 bytes, NUL at 5 */
+            int enc, crlf, trunc = -1, nul = -1;
+            long size = -1;
+            char *t;
+            FILE *f = fopen(tmp, "wb");
+            CHECK(f != 0);
+            if (f) {
+                CHECK(fwrite(bin, 1, sizeof(bin) - 1, f) == sizeof(bin) - 1);
+                fclose(f);
+
+                t = codeReadText(tmp, &enc, &crlf, &trunc);
+                CHECK(t != 0);
+                CHECK(trunc == 1);
+                if (t) CHECK(!strcmp(t, "head\n"));   /* stops at the NUL */
+                free(t);
+
+                CHECK(codeFileSniff(tmp, &size, &nul) == 1);
+                CHECK(size == (long)(sizeof(bin) - 1));  /* the WHOLE file */
+                CHECK(nul == 1);
+
+                /* Plain text: neither of them cries wolf. */
+                f = fopen(tmp, "wb");
+                if (f) { fwrite("a\nb\n", 1, 4, f); fclose(f); }
+                trunc = -1; nul = -1;
+                t = codeReadText(tmp, &enc, &crlf, &trunc);
+                CHECK(t != 0 && trunc == 0);
+                free(t);
+                CHECK(codeFileSniff(tmp, &size, &nul) == 1 && nul == 0 &&
+                      size == 4);
+
+                remove(tmp);
+            }
+            /* Nothing to read: the sniff fails rather than reporting zero. */
+            CHECK(codeFileSniff("ecmtest-no-such-file.tmp", &size, &nul) == 0);
+        }
+
         delete T;
         delete S;
     }

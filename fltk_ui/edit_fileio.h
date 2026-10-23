@@ -175,8 +175,10 @@ static int codeAnsiIsLossy(const char *text, int n)
 }
 
 /* Read a whole file. Returns malloc'd UTF-8 text with LF line ends (caller
- * frees), or NULL if it cannot be read. Sets *enc and *crlf. */
-static char *codeReadText(const char *path, int *enc, int *crlf)
+ * frees), or NULL if it cannot be read. Sets *enc and *crlf, and *trunc
+ * (which may be NULL) to 1 if the file holds a NUL byte -- which is where the
+ * text returned STOPS; see the note at that test below. */
+static char *codeReadText(const char *path, int *enc, int *crlf, int *trunc)
 {
     FILE *f = fl_fopen(path, "rb");
     long n;
@@ -205,6 +207,19 @@ static char *codeReadText(const char *path, int *enc, int *crlf)
         *enc = CODE_ENC_UTF8;
     } else {
         *enc = CODE_ENC_ANSI;
+    }
+
+    /* A NUL byte is where the text ENDS, for the walk below and for every
+       str* call downstream: the document becomes the front of the file and no
+       more. Not an error -- looking at a binary file is a legitimate thing to
+       ask for -- but the caller has to be told, because saving a document that
+       is only part of its file back over that file would truncate it. Tested
+       on the raw bytes, before the ANSI conversion can make the two lengths
+       incomparable. */
+    if (trunc) {
+        int z;
+        *trunc = 0;
+        for (z = 0; z < dn; z++) if (!data[z]) { *trunc = 1; break; }
     }
 
     if (*enc == CODE_ENC_ANSI) {
@@ -395,7 +410,7 @@ static const char *const codeOpenExt[] = {
     "markdown", "md", "mdown", "mjs", "mkd", "nfo", "pas", "patch", "php",
     "phtml", "pp", "props", "py", "pyw", "qrc", "rc", "rst", "sh", "sql",
     "svg", "tcl", "tex", "tmx", "toml", "ts", "tsv", "tsx", "txt", "vert",
-    "xhtml", "xml", "xsd", "xsl", "xslt", "yaml", "yml"
+    "xhtml", "xml", "xsd", "xsl", "xslt", "yaml", "yml", "zsh"
 };
 
 /* No extension at all, but text by convention. Matched against the WHOLE
@@ -424,6 +439,44 @@ static int codeFileOpenableName(const char *name)
     /* "CMakeLists.txt" has an extension AND is in the bare list; so would
        any future "Something.cfg"-shaped convention name. */
     return codeNameInList(codeOpenBare, CODE_NLIST(codeOpenBare), name);
+}
+
+/* ---- past the gate, once, on purpose -------------------------------------
+ *
+ * The Folders tree's "Open as Text" is the one command that steps around
+ * codeFileOpenableName(), so the two hazards that list was standing in for
+ * have to be met for real -- and the only way to know either is to read the
+ * bytes, which is exactly what the tree itself must never do per entry.
+ * Here it is one file, after one deliberate click, so the cost is fine.
+ *
+ *   *size -- the byte count, for the "this is enormous" question.
+ *   *nul  -- 1 if a NUL byte appears ANYWHERE. codeReadText() compacts CRLF
+ *            with a `for (; text[i]; i++)` walk, so it stops at the first NUL
+ *            and the document is SHORTER than the file: shown truncated, and
+ *            truncated for good if it is ever saved back. The whole file is
+ *            scanned rather than a 4 KB prefix because a wrong answer here is
+ *            what silently destroys a file.
+ *
+ * Returns 0 if the file cannot be opened; *size / *nul are untouched then.
+ */
+static int codeFileSniff(const char *path, long *size, int *nul)
+{
+    FILE *f = fl_fopen(path, "rb");
+    char buf[4096];
+    size_t got, k;
+    long n = 0;
+    int bin = 0;
+
+    if (!f) return 0;
+    while ((got = fread(buf, 1, sizeof(buf), f)) > 0) {
+        n += (long)got;
+        if (!bin)
+            for (k = 0; k < got; k++) if (!buf[k]) { bin = 1; break; }
+    }
+    fclose(f);
+    *size = n;
+    *nul  = bin;
+    return 1;
 }
 
 #endif /* EDIT_FILEIO_H */

@@ -590,6 +590,7 @@ public:
         mCharPx  = 0;
         mEnc     = CODE_ENC_UTF8;
         mCrlf    = CODE_DEFAULT_CRLF;
+        mTrunc   = 0;
         mQuietPoke = 0;
         fl_text_display_longest_line = longestLineHook;   /* see trackLongest() */
 
@@ -749,8 +750,8 @@ public:
      * Returns 0 on success, like Fl_Text_Buffer::loadfile(). */
     int loadFile(const char *path)
     {
-        int enc, crlf;
-        char *t = codeReadText(path, &enc, &crlf);
+        int enc, crlf, trunc;
+        char *t = codeReadText(path, &enc, &crlf, &trunc);
         if (!t) return 1;
         mLang = lexLangFromPath(path);
         mTextBuf->text(t);
@@ -760,6 +761,7 @@ public:
         mDirty = 0;
         mEnc   = enc;
         mCrlf  = crlf;
+        mTrunc = trunc;
         return 0;
     }
 
@@ -891,6 +893,13 @@ public:
     /* ---- dirty tracking, for tab captions and close prompts ---- */
     int  dirty() const { return mDirty; }
     void clearDirty() { mDirty = 0; }
+
+    /* 1 if the file this was loaded from holds a NUL byte, so the buffer is
+       only the part of it before that -- a binary file opened to be looked at.
+       The owner is expected to keep saveFile() off the original; nothing here
+       enforces it, because "save it somewhere else" is a document-level
+       decision and this widget has no idea where its file came from. */
+    int  truncated() const { return mTrunc; }
 
     /* Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z, intercepted before Fl_Text_Editor's own
      * key bindings so its kf_undo (which drives FLTK's dead undo) never runs.
@@ -1383,6 +1392,7 @@ private:
     int mMaxCols;                 /* longest line in the buffer, in columns */
     int mEnc;                     /* CODE_ENC_*: how the file is saved */
     int mCrlf;                    /* 1 = CRLF line ends on disk, 0 = LF */
+    int mTrunc;                   /* loaded file had a NUL: see truncated() */
     int mCharPx;                  /* one monospaced cell, px; 0 = not measured yet */
     int mQuietPoke;               /* inside a display-only buffer poke, see below */
 
