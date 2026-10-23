@@ -2,9 +2,9 @@
 #define EDIT_MATCH_H
 
 /*
- * edit_match.h -- find the pair to highlight for the caret: matching
- * brackets ( ) [ ] { }, and in HTML / PHP the matching tag name of an
- * element (<div> ... </div>).
+ * edit_match.h -- what the caret says to highlight: the matching bracket
+ * ( ) [ ] { }, in HTML / PHP the matching tag name of an element
+ * (<div> ... </div>), and the other occurrences of the word it is on.
  *
  * Works on the text buffer plus the parallel style buffer edit_code.h keeps
  * ('A' + LEX_* slot per byte), so it can tell code from comments and
@@ -17,6 +17,7 @@
  */
 
 #include <FL/Fl_Text_Buffer.H>
+#include <stdlib.h>
 #include "edit_lex.h"
 
 #define CODE_MATCH_LIMIT 262144
@@ -230,6 +231,101 @@ static int codeFindPair(Fl_Text_Buffer *b, Fl_Text_Buffer *sty, int lang, int po
         start[1] = m; len[1] = l;
         return 2;
     }
+}
+
+/* ---- the word at the caret ----------------------------------------------
+ *
+ * For "show me where else this name is used": a reading aid, not a symbol
+ * index. A plain byte compare, whole words only, no scoping and no idea what
+ * a declaration is -- which is the right trade for a 300 MHz machine, and
+ * honest, because nothing here parses the language.
+ */
+
+#define CODE_WORD_MAX 64        /* a longer name is not highlighted */
+
+/* A word byte: an ASCII identifier byte, plus anything >= 0x80 so a UTF-8
+   name holds together instead of breaking at its first accent. */
+static int codeWordByte(int c)
+{
+    c = (unsigned char)c;
+    return lexIsAlnum(c) || c >= 0x80;
+}
+
+/* The word the caret is in -- or the one it has just left, since typing a
+ * name and stopping leaves the caret past its end -- copied into `out`.
+ *
+ * Returns its length, or 0 if there is no word there, it does not fit, or it
+ * is not a NAME -- which is two tests:
+ *
+ *   it does not start with a digit, so a number is left alone. Standing past
+ *   `x = 0;` must not underline every 0 in the file, and this catches it in
+ *   a plain .txt too, where the lexer has no numbers to colour.
+ *
+ *   it is not one of the language's own words, which is the whole reason the
+ *   style buffer is passed in: LEX_KEYWORD and LEX_TYPE are the two slots a
+ *   lexer gives to vocabulary rather than to names, so underlining every `if`
+ *   and every `int` is noise and is refused. Builtins (LEX_IDENT) are
+ *   deliberately NOT refused -- `printf` is a name worth tracing.
+ */
+static int codeWordAt(Fl_Text_Buffer *b, Fl_Text_Buffer *sty, int pos,
+                      char *out, int outLen)
+{
+    int n, a, e, slot, i;
+
+    if (!b || !out || outLen < 2) return 0;
+    n = b->length();
+    if (pos < 0 || pos > n) return 0;
+    if (!(pos < n && codeWordByte(b->byte_at(pos)))) {
+        if (pos > 0 && codeWordByte(b->byte_at(pos - 1))) pos--;
+        else return 0;
+    }
+    for (a = pos; a > 0 && codeWordByte(b->byte_at(a - 1)); a--) ;
+    for (e = pos; e < n && codeWordByte(b->byte_at(e)); e++) ;
+    if (e - a >= outLen) return 0;
+    if (lexIsDigit((unsigned char)b->byte_at(a))) return 0;
+    slot = codeMatchSlot(sty, a);
+    if (slot == LEX_KEYWORD || slot == LEX_TYPE) return 0;
+    for (i = a; i < e; i++) out[i - a] = b->byte_at(i);
+    out[e - a] = '\0';
+    return e - a;
+}
+
+/* Whole-word occurrences of `word` in [from, to), as buffer positions, at
+ * most maxN of them. Returns how many were written.
+ *
+ * Case-SENSITIVE: two spellings of a name are two names in every language
+ * here. The range is meant to be what is on screen, and the text is copied
+ * once rather than read a byte at a time through the gap buffer, so the cost
+ * is one malloc of a screenful per scan and not a function call per byte.
+ * The bytes just outside the range decide the boundary at each end, because
+ * the top and bottom of a view can fall inside a word.
+ */
+static int codeWordHits(Fl_Text_Buffer *b, const char *word, int from, int to,
+                        int *pos, int maxN)
+{
+    char *t;
+    int len, n, i, hits = 0;
+
+    if (!b || !word || !*word || !pos || maxN <= 0) return 0;
+    len = (int)strlen(word);
+    n = b->length();
+    if (from < 0) from = 0;
+    if (to > n) to = n;
+    if (to - from < len) return 0;
+    t = b->text_range(from, to);
+    if (!t) return 0;
+    n = to - from;
+    for (i = 0; i + len <= n && hits < maxN; i++) {
+        if (t[i] != word[0] || memcmp(t + i, word, (size_t)len) != 0) continue;
+        if (i > 0 ? codeWordByte(t[i - 1])
+                  : (from > 0 && codeWordByte(b->byte_at(from - 1)))) continue;
+        if (i + len < n ? codeWordByte(t[i + len])
+                        : codeWordByte(b->byte_at(to))) continue;
+        pos[hits++] = from + i;
+        i += len - 1;                  /* no overlapping hits */
+    }
+    free(t);
+    return hits;
 }
 
 #endif /* EDIT_MATCH_H */

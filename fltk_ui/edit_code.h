@@ -122,6 +122,11 @@ static void codeTrace(const char *fmt, ...)
 /* Bracket / tag pair outline (edit_match.h): the line-number tint, so it
  * reads as a marker, not as another syntax colour. Unmatched: CODE_COL_ERROR. */
 #define CODE_COL_MATCH     CODE_RGB(0x9a, 0xa3, 0xc9)
+/* The underline under the other uses of the word at the caret. Dimmer than
+   CODE_COL_MATCH on purpose: there are up to CODE_OCC_MAX of these on screen
+   at once and they must read as a hint you can ignore, where a pair box is a
+   single answer to a single question. */
+#define CODE_COL_OCCUR     CODE_RGB(0x62, 0x72, 0xa4)
 
 /* The dark theme's scrollbar, shared by the editor and the Folders tree so
  * the two cannot drift apart. Fl_Scrollbar draws its trough with box() in
@@ -149,6 +154,12 @@ static void codeThemeScrollbar(Fl_Scrollbar *s)
 #ifndef CODE_CARET_BLINK
 #define CODE_CARET_BLINK 0.53
 #endif
+
+/* How many uses of the word at the caret are underlined at once. A view holds
+   far fewer than this in any normal file; the cap is here so that standing on
+   a name like `i` in a minified line cannot turn one draw into thousands of
+   position_to_xy() calls. */
+#define CODE_OCC_MAX 128
 
 /* Order MUST match the LEX_* slot enum in edit_lex.h.  Courier New's bold and
  * italic faces share the regular advance width, so mixing them here does not
@@ -181,6 +192,10 @@ static int codeIndent = CODE_INDENT;
 static int codeUseTabs = 0;
 /* Show the line-number gutter. */
 static int codeLineNumbers = 1;
+/* Underline the other uses of the word at the caret. Off is a real answer:
+   on a crowded screen the underlines can be more than they are worth, and
+   this is a reading aid, not a correctness one. */
+static int codeOccurs = 1;
 
 /* Runtime code font size -- CODE_FONTSIZE scaled for the display. Set it with
  * codeSetFontSize() BEFORE the first CodeEditor is constructed; existing
@@ -585,6 +600,10 @@ public:
         mHlBad = 0;
         mHlCaret = -1;
         mHlStale = 1;
+        mOccWord[0] = '\0';
+        mOccN = 0;
+        mOccFirst = mOccLast = -1;
+        mOccHoriz = 0;
         mLineNumLines = -1;
         mMaxCols = 0;
         mCharPx  = 0;
@@ -722,6 +741,7 @@ public:
             mLineNumLines = mNBufferLines;
             draw_line_numbers(true);
         }
+        occDraw();                /* under the pair boxes and the caret */
         matchDraw();
         caretDraw();
 
@@ -817,6 +837,7 @@ public:
         textsize(codeFontSize);
         linenumber_size(codeFontSize);
         linenumber_width(codeLineNumbers ? codeGutterWidth() : 0);
+        occApply();
         /* Fl_Text_Buffer::tab_distance() is not a plain setter: it announces
          * "the whole buffer was replaced" (nInserted == nDeleted == length,
          * with the entire text as deletedText) so that displays re-layout.
@@ -1290,6 +1311,7 @@ public:
         if (Fl::focus() == this) Fl::add_timeout(CODE_CARET_BLINK, caretBlinkCb, this);
         caretRedisplay();
         matchUpdate();
+        occUpdate();
     }
     void caretStop()
     {
@@ -1303,6 +1325,7 @@ public:
         ed->mCaretOn = !ed->mCaretOn;
         ed->caretRedisplay();
         ed->matchUpdate();        /* catches caret moves made from outside (Find, Go to) */
+        ed->occUpdate();          /* ...and so the underlines follow those too */
         Fl::repeat_timeout(CODE_CARET_BLINK, caretBlinkCb, v);
     }
 
@@ -1348,6 +1371,141 @@ public:
                 fl_rect(x, y, mHlLen[k] * charPx(), mMaxsize);
         fl_pop_clip();
     }
+    /* ---- the word at the caret ------------------------------------------
+     * An underline under every OTHER use of it that is on screen, so a name
+     * can be followed by eye while scrolling. Whole-word byte compare, no
+     * language knowledge beyond the one veto codeWordAt() applies (keywords
+     * and types are not names) -- see edit_match.h.
+     *
+     * Three things have to be kept apart here:
+     *
+     *   the WORD changes (the caret moved to another name): the old
+     *   underlines have to be erased and the new ones painted, which is what
+     *   the two occRedisplay() calls in occUpdate() are for;
+     *
+     *   the VIEW changes (a scroll): every underline moves, but the whole
+     *   text area is being repainted anyway, so occDraw() just rescans and
+     *   needs no damage of its own;
+     *
+     *   NEITHER changes (a caret blink, 2 Hz, forever): nothing must happen.
+     *   Hence the cached x / y -- position_to_xy() measures the text before
+     *   each hit, and doing that CODE_OCC_MAX times twice a second is the one
+     *   way this feature could be felt on a Pentium II.
+     */
+    void occRedisplay()
+    {
+        int k, len = (int)strlen(mOccWord);
+        for (k = 0; k < mOccN; k++)
+            redisplay_range(mOccPos[k], mOccPos[k] + len);
+    }
+
+    /* Find the hits for the current word in the current view, and where they
+       are. Safe to call outside draw(): position_to_xy() is a query. */
+    void occScan()
+    {
+        int k;
+        mOccFirst = mFirstChar;
+        mOccLast  = mLastChar;
+        mOccHoriz = mHorizOffset;
+        mOccN = mOccWord[0] ? codeWordHits(mTextBuf, mOccWord, mFirstChar,
+                                           mLastChar, mOccPos, CODE_OCC_MAX)
+                            : 0;
+        for (k = 0; k < mOccN; k++)
+            if (!position_to_xy(mOccPos[k], &mOccX[k], &mOccY[k]))
+                mOccX[k] = -1;                /* scrolled out: not drawable */
+    }
+
+    void occUpdate()
+    {
+        char w[CODE_WORD_MAX];
+        int n = 0, a, e;
+
+        if (!codeOccurs) return;        /* occApply() cleared what was drawn */
+
+        if (mTextBuf->selection_position(&a, &e)) {
+            /* A one-word selection is a double-click, which is a request to
+               see that word. Anything wider is the user working with a
+               range, and underlines inside a selection would just fight the
+               selection colour. */
+            n = codeWordAt(mTextBuf, mStyleBuf, a, w, (int)sizeof(w));
+            if (n && (e - a != n ||
+                      (a > 0 && codeWordByte(mTextBuf->byte_at(a - 1)))))
+                n = 0;
+        } else {
+            n = codeWordAt(mTextBuf, mStyleBuf, insert_position(), w,
+                           (int)sizeof(w));
+        }
+        if (!n) w[0] = '\0';
+        if (!strcmp(w, mOccWord) && mFirstChar == mOccFirst &&
+            mLastChar == mOccLast && mHorizOffset == mOccHoriz)
+            return;                           /* same word, same view */
+        occRedisplay();                       /* erase where they were */
+        strcpy(mOccWord, w);
+        occScan();
+        occRedisplay();                       /* paint where they are */
+    }
+
+    void occDraw()
+    {
+        int k, w, t;
+        if (!codeOccurs) return;
+        /* The view moved since the scan -- which is to say a scroll is being
+           painted right now, so this costs nothing extra. */
+        if (mFirstChar != mOccFirst || mLastChar != mOccLast ||
+            mHorizOffset != mOccHoriz)
+            occScan();
+        if (!mOccN) return;
+        w = (int)strlen(mOccWord) * charPx();
+        t = mMaxsize / 10;                    /* 1 px at 14, thicker with DPI */
+        if (t < 1) t = 1;
+        fl_push_clip(text_area.x, text_area.y, text_area.w, text_area.h);
+        fl_color(CODE_COL_OCCUR);
+        for (k = 0; k < mOccN; k++)
+            if (mOccX[k] >= 0)
+                fl_rectf(mOccX[k], mOccY[k] + mMaxsize - t, w, t);
+        fl_pop_clip();
+    }
+
+    /* The setting changed. Switched off, what is on screen has to go, and
+       occUpdate() will not be the one to do it -- it returns at the door. */
+    void occApply()
+    {
+        if (!codeOccurs) {
+            if (!mOccN && !mOccWord[0]) return;
+            occRedisplay();
+            mOccN = 0;
+            mOccWord[0] = '\0';
+            mOccFirst = -1;
+            return;
+        }
+        mOccFirst = -1;                 /* a key nothing can match: rescan */
+        occUpdate();
+    }
+
+    /* An edit moves the text under the underlines. Keep the ones that still
+       point at their word (shifted), drop any the edit ran through -- those
+       lines are in the edit's own damage and get repainted anyway -- and
+       force a rescan, because the word itself may have changed. */
+    void occShift(int pos, int nInserted, int nDeleted)
+    {
+        int k = 0, d = nInserted - nDeleted, len = (int)strlen(mOccWord);
+        mOccFirst = -1;                       /* a key nothing can match */
+        while (k < mOccN) {
+            if (mOccPos[k] >= pos + nDeleted) { mOccPos[k] += d; k++; }
+            else if (mOccPos[k] + len > pos) {
+                mOccN--;
+                if (k < mOccN) {
+                    memmove(mOccPos + k, mOccPos + k + 1,
+                            (size_t)(mOccN - k) * sizeof(int));
+                    memmove(mOccX + k, mOccX + k + 1,
+                            (size_t)(mOccN - k) * sizeof(int));
+                    memmove(mOccY + k, mOccY + k + 1,
+                            (size_t)(mOccN - k) * sizeof(int));
+                }
+            } else k++;                       /* wholly before the edit */
+        }
+    }
+
     void caretDraw()
     {
         int cx, cy, t;
@@ -1388,6 +1546,13 @@ private:
     int mHlBad;                   /* 1: an unmatched bracket */
     int mHlCaret;                 /* caret the boxes were computed for */
     int mHlStale;                 /* text changed since then */
+    char mOccWord[CODE_WORD_MAX]; /* word the underlines are for; "" = none */
+    int mOccN;                    /* how many of them are on screen */
+    int mOccPos[CODE_OCC_MAX];    /* buffer position of each */
+    int mOccX[CODE_OCC_MAX];      /* ...and where that was on screen, so a */
+    int mOccY[CODE_OCC_MAX];      /*    blink does not re-measure the view */
+    int mOccFirst, mOccLast;      /* the visible range they were found in */
+    int mOccHoriz;                /* ...and the horizontal scroll then */
     int mLineNumLines;            /* mNBufferLines at the last margin repaint */
     int mMaxCols;                 /* longest line in the buffer, in columns */
     int mEnc;                     /* CODE_ENC_*: how the file is saved */
@@ -1415,6 +1580,7 @@ private:
         ed->styleUpdate(pos, nInserted, nDeleted);
         ed->trackLongest(pos, nInserted, nDeleted, deletedText);
         ed->matchShift(pos, nInserted, nDeleted);
+        ed->occShift(pos, nInserted, nDeleted);
     }
 
     /* Keep the pair boxes on their characters through an edit until the next

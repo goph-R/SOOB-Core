@@ -1027,6 +1027,61 @@ int main(void)
             CHECK(r && !strcmp(r, "first") && lineNo == 1); free(r);
         }
 
+        /* ---- the word at the caret, and its other uses -------------------
+         * codeWordAt() picks the word and applies the one veto; codeWordHits()
+         * finds the rest of them. Both are pure buffer work, which is the
+         * whole reason they are not in the widget.
+         */
+        {
+            const char *src = "int count = 0;\n"
+                              "count = count + countX;\n"
+                              "/* count again */\n";
+            char w[CODE_WORD_MAX];
+            int p[16], n, hits;
+
+            reset(LEX_LANG_C, src);
+
+            /* on a name: the word, whatever part of it the caret is on */
+            n = codeWordAt(T, S, posOf("count"), w, (int)sizeof(w));
+            CHECK(n == 5 && !strcmp(w, "count"));
+            n = codeWordAt(T, S, posOf("count") + 3, w, (int)sizeof(w));
+            CHECK(n == 5 && !strcmp(w, "count"));
+            /* just past its end -- where typing a name leaves the caret */
+            n = codeWordAt(T, S, posOf("count") + 5, w, (int)sizeof(w));
+            CHECK(n == 5 && !strcmp(w, "count"));
+            /* the language's own words are not names */
+            CHECK(codeWordAt(T, S, posOf("int"), w, (int)sizeof(w)) == 0);
+            /* between two non-word bytes there is nothing to underline */
+            CHECK(codeWordAt(T, S, posOf("= 0") + 1, w, (int)sizeof(w)) == 0);
+            /* a number is not a name: standing past `= 0;` must not go and
+               underline every 0 in the file */
+            CHECK(codeWordAt(T, S, posOf("0;"), w, (int)sizeof(w)) == 0);
+            CHECK(codeWordAt(T, S, posOf("0;") + 1, w, (int)sizeof(w)) == 0);
+            /* a word in a COMMENT is still a name worth following */
+            n = codeWordAt(T, S, posOf("count again"), w, (int)sizeof(w));
+            CHECK(n == 5 && !strcmp(w, "count"));
+            /* no room for it */
+            CHECK(codeWordAt(T, S, posOf("count"), w, 4) == 0);
+
+            /* whole words only: "countX" is not a use of "count" */
+            hits = codeWordHits(T, "count", 0, T->length(), p, 16);
+            CHECK(hits == 4);
+            CHECK(hits == 4 && p[0] == posOf("count"));
+            CHECK(hits == 4 && p[3] == posOf("count again"));
+            /* the cap is obeyed */
+            CHECK(codeWordHits(T, "count", 0, T->length(), p, 2) == 2);
+            /* a range, and the word just outside each end of it */
+            n = posOf("count = count");
+            hits = codeWordHits(T, "count", n, n + 13, p, 16);
+            CHECK(hits == 2 && p[0] == n && p[1] == n + 8);
+            /* a range that CUTS a word must not report half of it: start one
+               byte into "count" and end one byte into the second one */
+            hits = codeWordHits(T, "count", n + 1, n + 9, p, 16);
+            CHECK(hits == 0);
+            CHECK(codeWordHits(T, "", 0, T->length(), p, 16) == 0);
+            CHECK(codeWordHits(T, "count", 0, 0, p, 16) == 0);
+        }
+
         /* ---- codeReadText / codeFileSniff: the truncation flag ----------
          * A NUL byte ends the text codeReadText() returns, so a document read
          * from such a file is only the front of it and must never be saved
