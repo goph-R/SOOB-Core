@@ -245,6 +245,22 @@ public:
         codeThemeScrollbar(_hscroll);
     }
 
+    static int openedRec(Fl_Tree_Item *it, const char **out, int n, int maxN)
+    {
+        const char *p;
+        int k;
+        if (!it || n >= maxN) return n;
+        /* The hidden root has no FoldItem and is always open: skip it, but
+           walk into it -- the listed folders are its children. */
+        if (it->parent() && it->is_open() && isDirOf(it) &&
+            (p = pathOf(it)) != 0)
+            out[n++] = p;
+        if (!it->parent() || it->is_open())
+            for (k = 0; k < it->children() && n < maxN; k++)
+                n = openedRec(it->child(k), out, n, maxN);
+        return n;
+    }
+
     /* Free every FoldItem in a subtree, the item's OWN included. MUST run
        before remove() -- Fl_Tree frees the items but never their user data.
        Stub children carry a null, so they cost nothing here. */
@@ -330,7 +346,7 @@ public:
        that finds no child returns 0. A FILE that happens to match the prefix
        test is harmless too -- populate() ignores a non-directory, so it has
        no children and the next turn ends the walk. */
-    Fl_Tree_Item *reveal(const char *path)
+    Fl_Tree_Item *locate(const char *path)
     {
         Fl_Tree_Item *r = root(), *it = 0;
         int k;
@@ -347,6 +363,12 @@ public:
                 if (holdsPath(it->child(k), path)) next = it->child(k);
             it = next;
         }
+        return it;
+    }
+
+    Fl_Tree_Item *reveal(const char *path)
+    {
+        Fl_Tree_Item *it = locate(path);
         if (!it) return 0;
         select_only(it, 0);                /* 0: this IS the action, not a
                                               reason to re-enter the owner */
@@ -354,6 +376,23 @@ public:
         redraw();
         return it;
     }
+
+    /* Open the directory at `path`, and everything above it, WITHOUT
+       selecting or scrolling -- restoring a saved tree state is not a thing
+       the user just did, so it must not move the view or the selection. */
+    Fl_Tree_Item *expandTo(const char *path)
+    {
+        Fl_Tree_Item *it = locate(path);
+        if (!it || !isDirOf(it)) return it;
+        populate(it);
+        open(it, 0);
+        return it;
+    }
+
+    /* The directories that are open right now, parents BEFORE their children
+       (a pre-order walk), which is the order they have to be re-opened in.
+       The pointers are the items' own: use them and drop them. */
+    int openedDirs(const char **out, int maxN) { return openedRec(root(), out, 0, maxN); }
 
     /* Drop a listed folder. The disk is not touched. */
     void removeRoot(Fl_Tree_Item *it)

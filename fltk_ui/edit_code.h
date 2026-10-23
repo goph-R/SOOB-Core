@@ -914,6 +914,17 @@ public:
     /* ---- dirty tracking, for tab captions and close prompts ---- */
     int  dirty() const { return mDirty; }
     void clearDirty() { mDirty = 0; }
+    /* For a buffer restored from a session store: the text came from the
+       stash, not from the file it belongs to, so it IS unsaved even though
+       nothing has been typed into it. text() clears the flag; this puts it
+       back. */
+    void markDirty() { mDirty = 1; }
+
+    /* First visible line, and putting it back -- what a session restore needs
+       so a file reopens where it was being read rather than at the top.
+       Display lines when wrapped, which is what scroll() wants either way. */
+    int  topLine() const { return mTopLineNum; }
+    void topLine(int n)  { scroll(n < 1 ? 1 : n, mHorizOffset); }
 
     /* 1 if the file this was loaded from holds a NUL byte, so the buffer is
        only the part of it before that -- a binary file opened to be looked at.
