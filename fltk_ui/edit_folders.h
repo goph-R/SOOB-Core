@@ -300,6 +300,61 @@ public:
         return (it && it->parent() == r) ? it : 0;
     }
 
+    /* Does `it` name this path, or is it a folder the path lives under?
+       The second half is codeFileUnder()'s separator-boundary compare, so
+       "C:\\proj" does not swallow "C:\\project2\\x.c". */
+    static int holdsPath(Fl_Tree_Item *it, const char *path)
+    {
+        const char *p = pathOf(it);
+        return p && (foldPathEq(p, path) || codeFileUnder(path, p));
+    }
+    static int isPath(Fl_Tree_Item *it, const char *path)
+    {
+        const char *p = pathOf(it);
+        return p && foldPathEq(p, path) ? 1 : 0;
+    }
+
+    /* Select the item for `path`, reading and opening every directory on the
+       way down to it, and scroll it into view. Returns the item, or 0 if the
+       tree cannot show the path -- no listed folder holds it, or a name on
+       the way down is one the tree does not list: a hidden file, or one
+       created since that directory was last read. The caller is expected to
+       say which, because the cures differ (add the folder, or Refresh).
+
+       Deliberately does NOT re-read a directory that is already loaded. A
+       stale folder is what Refresh is for, and re-reading here would close
+       whatever the user has open underneath it -- a steep price for a command
+       whose whole job is to show one row.
+
+       The walk cannot loop: every turn descends one component, and a turn
+       that finds no child returns 0. A FILE that happens to match the prefix
+       test is harmless too -- populate() ignores a non-directory, so it has
+       no children and the next turn ends the walk. */
+    Fl_Tree_Item *reveal(const char *path)
+    {
+        Fl_Tree_Item *r = root(), *it = 0;
+        int k;
+
+        if (!r || !path || !*path) return 0;
+        for (k = 0; k < r->children() && !it; k++)
+            if (holdsPath(r->child(k), path)) it = r->child(k);
+
+        while (it && !isPath(it, path)) {
+            Fl_Tree_Item *next = 0;
+            populate(it);                  /* a no-op once loaded */
+            open(it, 0);                   /* 0: populate() already ran */
+            for (k = 0; k < it->children() && !next; k++)
+                if (holdsPath(it->child(k), path)) next = it->child(k);
+            it = next;
+        }
+        if (!it) return 0;
+        select_only(it, 0);                /* 0: this IS the action, not a
+                                              reason to re-enter the owner */
+        show_item(it);
+        redraw();
+        return it;
+    }
+
     /* Drop a listed folder. The disk is not touched. */
     void removeRoot(Fl_Tree_Item *it)
     {
