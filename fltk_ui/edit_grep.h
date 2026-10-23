@@ -258,12 +258,29 @@ static int codeGrepWalk(CodeGrep *g, const char *dir, const char *needle,
 }
 
 /* Search `dir` for `needle`. The caller owns `g` and must codeGrepFree it. */
+/* Search one more folder into results that already exist, for a caller with
+   several folders to cover -- SOOB-Code's "All" searches every folder in the
+   sidebar. Everything accumulates the way it must: `n`, `files` and `scanned`
+   add up across the calls, and maxHits is measured against the RUNNING total,
+   so the cap is a cap on the whole search and not one per folder. A caller
+   should stop once `truncated` is set; carrying on would only add to a list
+   that is already short of the truth.
+
+   Overlapping folders are the caller's problem. Nothing here can tell that
+   two walks reached the same file, and a file searched twice reports its
+   matches twice -- which a replace would then count twice. */
+static void codeGrepAdd(CodeGrep *g, const char *dir, const char *needle,
+                        int matchCase, int recurse, int maxHits)
+{
+    if (!g || !dir || !*dir || !needle || !*needle) return;
+    codeGrepWalk(g, dir, needle, matchCase, recurse, maxHits, 0);
+}
+
 static void codeGrepRun(CodeGrep *g, const char *dir, const char *needle,
                         int matchCase, int recurse, int maxHits)
 {
     codeGrepFree(g);                   /* also leaves it initialised */
-    if (!dir || !*dir || !needle || !*needle) return;
-    codeGrepWalk(g, dir, needle, matchCase, recurse, maxHits, 0);
+    codeGrepAdd(g, dir, needle, matchCase, recurse, maxHits);
 }
 
 #endif /* EDIT_GREP_H */
