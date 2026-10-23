@@ -285,9 +285,50 @@ int main(void)
         lexText(LEX_LANG_MARKDOWN, src, sty);
         CHECK(carryAfterLine(src, sty, 0) == LS_MD_FENCE + 1);   /* sub = pascal */
         CHECK(allSlot(src, sty, "begin", LEX_KEYWORD));
-        CHECK(carryAfterLine(src, sty, 3) == LS_MD_FENCE + LEX_MD_NSUB);  /* tilde, no lang */
+        CHECK(carryAfterLine(src, sty, 3) == LS_MD_FENCE_TILDE);
         CHECK(allSlot(src, sty, "raw text", LEX_CODE));
         CHECK(carryAfterLine(src, sty, 5) == LS_NORMAL);
+    }
+    /* the five tags that the tilde trade bought: a ``` fence switches to each
+     * of them, and a ~~~ fence deliberately does not switch to anything */
+    {
+        const char *src =
+            "```bash\n"
+            "echo $HOME # hi\n"
+            "```\n"
+            "```json\n"
+            "{\"k\": 1}\n"
+            "```\n"
+            "```ini\n"
+            "[sec]\n"
+            "```\n"
+            "```xml\n"
+            "<tag attr=\"v\"/>\n"
+            "```\n"
+            "```cmd\n"
+            "echo off\n"
+            "```\n"
+            "~~~php\n"
+            "<?php $x = 1;\n"
+            "~~~\n";
+        lexText(LEX_LANG_MARKDOWN, src, sty);
+        CHECK(carryAfterLine(src, sty, 0)  == LS_MD_FENCE + 11);   /* bash */
+        CHECK(allSlot(src, sty, "# hi", LEX_COMMENT));
+        CHECK(carryAfterLine(src, sty, 3)  == LS_MD_FENCE + 15);   /* json */
+        CHECK(allSlot(src, sty, "\"k\"", LEX_TYPE));               /* a key */
+        CHECK(carryAfterLine(src, sty, 6)  == LS_MD_FENCE + 13);   /* ini */
+        CHECK(allSlot(src, sty, "[sec]", LEX_TYPE));
+        CHECK(carryAfterLine(src, sty, 9)  == LS_MD_FENCE + 14);   /* xml */
+        CHECK(allSlot(src, sty, "attr", LEX_IDENT));
+        CHECK(allSlot(src, sty, "\"v\"", LEX_STRING));
+        CHECK(carryAfterLine(src, sty, 12) == LS_MD_FENCE + 12);   /* cmd -> bat */
+        CHECK(allSlot(src, sty, "echo", LEX_IDENT));         /* a bat builtin */
+        /* ~~~php: tagged, but a tilde fence carries no sub-language, so the
+           body stays flat code. Dropping that is what paid for the five
+           above -- if this ever starts colouring, the budget moved. */
+        CHECK(carryAfterLine(src, sty, 15) == LS_MD_FENCE_TILDE);
+        CHECK(allSlot(src, sty, "$x", LEX_CODE));
+        CHECK(carryAfterLine(src, sty, 17) == LS_NORMAL);
     }
     /* a ``` fence must not be closed by a ~~~ line and vice versa */
     {
@@ -323,8 +364,8 @@ int main(void)
         CHECK(carryAfterLine(src, sty, 4) == LS_MD_FENCE_LONG);  /* text after it */
         CHECK(carryAfterLine(src, sty, 5) == LS_NORMAL);         /* 5 closes 4 */
         CHECK(allSlot(src, sty, "out", LEX_PLAIN));
-        CHECK(carryAfterLine(src, sty, 7) == LS_MD_FENCE_LONG + 1);
-        CHECK(carryAfterLine(src, sty, 9) == LS_MD_FENCE_LONG + 1);  /* ~~~ too short */
+        CHECK(carryAfterLine(src, sty, 7) == LS_MD_FENCE_LONG_T);
+        CHECK(carryAfterLine(src, sty, 9) == LS_MD_FENCE_LONG_T);    /* ~~~ too short */
         CHECK(carryAfterLine(src, sty, 10) == LS_NORMAL);        /* trailing blank ok */
         CHECK(carryAfterLine(src, sty, 11) == LS_MD_FENCE + 0);
         CHECK(carryAfterLine(src, sty, 12) == LS_MD_FENCE + 0);  /* ```lua is content */
@@ -361,7 +402,17 @@ int main(void)
             { lexBatKeywords,  LEX_COUNT(lexBatKeywords),  1 },
             { lexBatOps,       LEX_COUNT(lexBatOps),       1 },
             { lexBatBuiltins,  LEX_COUNT(lexBatBuiltins),  1 },
-            { lexJsonWords,    LEX_COUNT(lexJsonWords),    0 }
+            { lexJsonWords,    LEX_COUNT(lexJsonWords),    0 },
+            { lexBashNames,    LEX_COUNT(lexBashNames),    1 },
+            { lexBatNames,     LEX_COUNT(lexBatNames),     1 },
+            { lexIniNames,     LEX_COUNT(lexIniNames),     1 },
+            { lexXmlNames,     LEX_COUNT(lexXmlNames),     1 },
+            { lexJsonNames,    LEX_COUNT(lexJsonNames),    1 },
+            { lexMdPascalAlias, LEX_COUNT(lexMdPascalAlias), 1 },
+            { lexMdLuaAlias,   LEX_COUNT(lexMdLuaAlias),   1 },
+            { lexCssNames,     LEX_COUNT(lexCssNames),     1 },
+            { lexJavaNames,    LEX_COUNT(lexJavaNames),    1 },
+            { lexSqlNames,     LEX_COUNT(lexSqlNames),     1 }
         };
         int t, k;
         for (t = 0; t < (int)(sizeof(tabs) / sizeof(tabs[0])); t++)
@@ -875,8 +926,29 @@ int main(void)
         /* the aliases double as markdown fence tags where they share a lexer */
         CHECK(lexMdFenceSub("glsl", 4) == lexMdFenceSub("c", 1));
         CHECK(lexMdFenceSub("ts", 2)   == lexMdFenceSub("js", 2));
-        /* ... but JSON is deliberately NOT a fence tag: see edit_lex.h */
-        CHECK(lexMdFenceSub("json", 4) == 0);
+        /* These five used to be extensions only -- there was no state budget
+           for them as fence tags. ~~~ giving up its sub-language paid for all
+           five, so an extension and a ``` tag now mean the same thing for
+           every language the lexer has. */
+        CHECK(lexMdSubLang[lexMdFenceSub("json", 4)] == LEX_LANG_JSON);
+        CHECK(lexMdSubLang[lexMdFenceSub("bash", 4)] == LEX_LANG_BASH);
+        CHECK(lexMdSubLang[lexMdFenceSub("sh",   2)] == LEX_LANG_BASH);
+        CHECK(lexMdSubLang[lexMdFenceSub("cmd",  3)] == LEX_LANG_BAT);
+        CHECK(lexMdSubLang[lexMdFenceSub("ini",  3)] == LEX_LANG_INI);
+        CHECK(lexMdSubLang[lexMdFenceSub("xml",  3)] == LEX_LANG_XML);
+        CHECK(lexMdSubLang[lexMdFenceSub("svg",  3)] == LEX_LANG_XML);
+        /* ...and an unknown tag still means no sub-language at all */
+        CHECK(lexMdFenceSub("yaml", 4) == 0);
+        CHECK(lexMdFenceSub("rust", 4) == 0);
+        /* the new tags work as extensions too, as they did before */
+        CHECK(lexLangFromPath("build.sh")   == LEX_LANG_BASH);
+        CHECK(lexLangFromPath("e98.bat")    == LEX_LANG_BAT);
+        CHECK(lexLangFromPath("x.cmd")      == LEX_LANG_BAT);
+        CHECK(lexLangFromPath("c.cfg")      == LEX_LANG_INI);
+        CHECK(lexLangFromPath("setup.inf")  == LEX_LANG_INI);
+        CHECK(lexLangFromPath("code.ini")   == LEX_LANG_INI);
+        CHECK(lexLangFromPath("a.svg")      == LEX_LANG_XML);
+        CHECK(lexLangFromPath("a.xsl")      == LEX_LANG_XML);
     }
 
     /* ---------------- JSON formatter ---------------- */

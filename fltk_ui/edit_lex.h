@@ -1,7 +1,8 @@
 /*
  * edit_lex.h -- line-oriented syntax lexer for Pascal, Lua, Markdown, the
- * C family (C/C++, Java, JavaScript, Python, CSS, SQL, PHP code) and HTML
- * (with embedded <script>, <style> and <?php ?> islands).
+ * C family (C/C++, Java, JavaScript, Python, CSS, SQL, PHP code), HTML
+ * (with embedded <script>, <style> and <?php ?> islands), shell, Windows
+ * batch, INI, XML and JSON.
  *
  * Deliberately has ZERO FLTK dependency so the grammars can be unit-tested
  * headless on Linux (fltk_ui/edit_code_test.cpp).  edit_code.h wraps this in an
@@ -28,6 +29,15 @@
  * would need two state values per line and there is only one free byte.
  * The same budget caps Lua long brackets at level 7 ([=======[): a deeper
  * opener is treated as level 7, so its real closer is not recognised.
+ *
+ * ...and it is why a ``` fence colours its language but a ~~~ one does not.
+ * A fence has to remember which character opened it -- a ``` line inside a
+ * ~~~ block is content, not a close -- so tracking the language for both
+ * doubles the cost, at one state per language.  Backticks are what documents
+ * are actually written with (and what every tool that generates Markdown
+ * emits), so they get the sub-languages and ~~~ gets a single flat state,
+ * the same treatment ```` already had.  That bought the room for ```bash,
+ * ```bat, ```ini, ```xml and ```json.
  */
 #ifndef EDIT_LEX_H
 #define EDIT_LEX_H
@@ -79,40 +89,46 @@ enum {
 /* ---- carry state -------------------------------------------------------
  * Must stay below 'A'+state == 0x7F so the style buffer remains pure ASCII;
  * Fl_Text_Buffer is UTF-8 aware and a >=0x80 byte would confuse it.  That
- * makes LS_MAX = 62 a hard ceiling; 60 is in use, so two states are left.
+ * makes LS_MAX = 62 a hard ceiling; 55 is in use, so seven states are left --
+ * and the cheapest thing to spend them on is another ``` sub-language, at one
+ * each.  edit_code_test.cpp asserts the ceiling, so overrunning it fails the
+ * tests rather than quietly corrupting a style buffer.
  */
-#define LEX_MD_NSUB 11      /* fence sub-languages: none + 10, see lexMdFenceSub */
+#define LEX_MD_NSUB 16      /* fence sub-languages: none + 15, see lexMdFenceSub */
 enum {
     LS_NORMAL       = 0,
     LS_PAS_BRACE    = 1,    /* inside { ... }                        */
     LS_PAS_PAREN    = 2,    /* inside (* ... *)                      */
     LS_LUA_LSTR     = 3,    /* + level 0..7   ->  3..10              */
     LS_LUA_LCOM     = 11,   /* + level 0..7   -> 11..18              */
-    LS_MD_FENCE     = 19,   /* + tilde*11 + sub -> 19..40            */
-    LS_CF_BLOCK     = 41,   /* C family: inside a block comment      */
-    LS_CF_TEMPLATE  = 42,   /* JS: inside a `template` string        */
-    LS_CF_TSQ       = 43,   /* Python: inside a ''' string           */
-    LS_CF_TDQ       = 44,   /* Python: inside a """ string           */
-    LS_CF_DQ        = 45,   /* PHP / SQL: inside a "string"          */
-    LS_CF_SQ        = 46,   /* PHP / SQL: inside a 'string'          */
-    LS_HTML_COMMENT = 47,   /* inside <!-- ... -->                   */
-    LS_HTML_TAG     = 48,   /* inside a tag spanning lines           */
-    LS_HTML_JS      = 49,   /* inside <script> ... </script>         */
-    LS_HTML_JS_BLOCK= 50,   /*   ... inside a block comment there    */
-    LS_HTML_JS_TPL  = 51,   /*   ... inside a `template` there       */
-    LS_HTML_CSS     = 52,   /* inside <style> ... </style>           */
-    LS_HTML_CSS_BLOCK=53,   /*   ... inside a block comment there    */
-    LS_PHP          = 54,   /* inside <?php ... ?>                   */
-    LS_PHP_BLOCK    = 55,   /*   ... inside a block comment there    */
-    LS_PHP_DQ       = 56,   /*   ... inside a "string" there         */
-    LS_PHP_SQ       = 57,   /*   ... inside a 'string' there         */
-    /* A Markdown fence opened with 4+ ` (58) or 4+ ~ (59), so a ``` line
-     * inside does not close it -- the way a document SHOWS a fenced block.
-     * One state per character, not 2 x 11 like LS_MD_FENCE: there is no room
-     * left, so these blocks get no sub-language colouring, and 4 and 5+ share
-     * a bucket (a ````` block is closed by an inner ````). */
-    LS_MD_FENCE_LONG = 58,
-    LS_MAX          = 60
+    /* ``` + a language: + sub 0..15 -> 19..34. Backticks only -- see the
+     * fence note in the header comment. */
+    LS_MD_FENCE     = 19,
+    /* The three fences that carry no sub-language, one state each. The
+     * character still has to be remembered, because only the character that
+     * opened a fence can close it; and 4 and 5+ share a bucket, so a `````
+     * block is closed by an inner ```` (the way a document SHOWS a fence). */
+    LS_MD_FENCE_TILDE  = 35,   /* ~~~                                   */
+    LS_MD_FENCE_LONG   = 36,   /* ```` and longer                       */
+    LS_MD_FENCE_LONG_T = 37,   /* ~~~~ and longer                       */
+    LS_CF_BLOCK     = 38,   /* C family: inside a block comment      */
+    LS_CF_TEMPLATE  = 39,   /* JS: inside a `template` string        */
+    LS_CF_TSQ       = 40,   /* Python: inside a ''' string           */
+    LS_CF_TDQ       = 41,   /* Python: inside a """ string           */
+    LS_CF_DQ        = 42,   /* PHP / SQL: inside a "string"          */
+    LS_CF_SQ        = 43,   /* PHP / SQL: inside a 'string'          */
+    LS_HTML_COMMENT = 44,   /* inside <!-- ... -->                   */
+    LS_HTML_TAG     = 45,   /* inside a tag spanning lines           */
+    LS_HTML_JS      = 46,   /* inside <script> ... </script>         */
+    LS_HTML_JS_BLOCK= 47,   /*   ... inside a block comment there    */
+    LS_HTML_JS_TPL  = 48,   /*   ... inside a `template` there       */
+    LS_HTML_CSS     = 49,   /* inside <style> ... </style>           */
+    LS_HTML_CSS_BLOCK=50,   /*   ... inside a block comment there    */
+    LS_PHP          = 51,   /* inside <?php ... ?>                   */
+    LS_PHP_BLOCK    = 52,   /*   ... inside a block comment there    */
+    LS_PHP_DQ       = 53,   /*   ... inside a "string" there         */
+    LS_PHP_SQ       = 54,   /*   ... inside a 'string' there         */
+    LS_MAX          = 55
 };
 #define LS_LUA_MAXLEVEL 7
 
@@ -1029,6 +1045,18 @@ static const char *const lexCssNames[]  = { "css" };
 static const char *const lexHtmlNames[] = { "htm","html","xhtml" };
 static const char *const lexPhpNames[]  = { "php","phtml" };
 static const char *const lexSqlNames[]  = { "sql" };
+/* These five were function-local in lexLangFromPath() while they could not be
+   fence tags. They are now both, like every table above: an extension on the
+   left of the dot and a ``` tag in a document.
+   .inf is Windows setup -- the same key=value-with-[sections] shape as .ini.
+   .tmx is a Tiled map, .qrc a Qt resource, .csproj / .props MSBuild: all XML
+   documents that do not say so in their extension. */
+static const char *const lexBashNames[] = { "bash","sh","shell","zsh" };
+static const char *const lexBatNames[]  = { "bat","batch","cmd" };
+static const char *const lexIniNames[]  = { "cfg","inf","ini" };
+static const char *const lexXmlNames[]  = { "csproj","props","qrc","svg","tmx",
+                                            "xml","xsd","xsl","xslt" };
+static const char *const lexJsonNames[] = { "json" };
 
 /* ---- Windows batch ------------------------------------------------------
  * Not expressible as a LexCf: the comment introducers are a WORD (`rem`) and
@@ -1284,7 +1312,8 @@ static int lexIniLine(int st, const char *s, int n, char *out)
 static const int lexMdSubLang[LEX_MD_NSUB] = {
     LEX_LANG_TEXT, LEX_LANG_PASCAL, LEX_LANG_LUA, LEX_LANG_C, LEX_LANG_JAVA,
     LEX_LANG_JS, LEX_LANG_PYTHON, LEX_LANG_CSS, LEX_LANG_HTML, LEX_LANG_PHP,
-    LEX_LANG_SQL
+    LEX_LANG_SQL, LEX_LANG_BASH, LEX_LANG_BAT, LEX_LANG_INI, LEX_LANG_XML,
+    LEX_LANG_JSON
 };
 
 static int lexMdFenceSub(const char *s, int len)
@@ -1299,6 +1328,11 @@ static int lexMdFenceSub(const char *s, int len)
     if (lexInTable(lexHtmlNames,     LEX_COUNT(lexHtmlNames),     s, len, 1)) return 8;
     if (lexInTable(lexPhpNames,      LEX_COUNT(lexPhpNames),      s, len, 1)) return 9;
     if (lexInTable(lexSqlNames,      LEX_COUNT(lexSqlNames),      s, len, 1)) return 10;
+    if (lexInTable(lexBashNames,     LEX_COUNT(lexBashNames),     s, len, 1)) return 11;
+    if (lexInTable(lexBatNames,      LEX_COUNT(lexBatNames),      s, len, 1)) return 12;
+    if (lexInTable(lexIniNames,      LEX_COUNT(lexIniNames),      s, len, 1)) return 13;
+    if (lexInTable(lexXmlNames,      LEX_COUNT(lexXmlNames),      s, len, 1)) return 14;
+    if (lexInTable(lexJsonNames,     LEX_COUNT(lexJsonNames),     s, len, 1)) return 15;
     return 0;
 }
 
@@ -1426,14 +1460,14 @@ static int lexMarkdownLine(int st, const char *s, int n, char *out)
      * lets a ```` block SHOW a ``` block, and why ```lua inside a ``` block
      * is content, not a close. Lengths beyond 3 cost a state each, so they
      * are bucketed: 3, or 4 and up (see LS_MD_FENCE_LONG). */
-    if ((st >= LS_MD_FENCE && st < LS_MD_FENCE + 2 * LEX_MD_NSUB) ||
-        st == LS_MD_FENCE_LONG || st == LS_MD_FENCE_LONG + 1) {
-        int  isLong = st >= LS_MD_FENCE_LONG;
-        int  f      = isLong ? 0 : st - LS_MD_FENCE;          /* 0..21 */
-        int  sub    = f % LEX_MD_NSUB;
-        char fc;
-        if (isLong) fc = (st == LS_MD_FENCE_LONG) ? '`' : '~';
-        else        fc = (f / LEX_MD_NSUB) ? '~' : '`';
+    if ((st >= LS_MD_FENCE && st < LS_MD_FENCE + LEX_MD_NSUB) ||
+        st == LS_MD_FENCE_TILDE || st == LS_MD_FENCE_LONG ||
+        st == LS_MD_FENCE_LONG_T) {
+        int  isLong = st == LS_MD_FENCE_LONG || st == LS_MD_FENCE_LONG_T;
+        int  isTick = st < LS_MD_FENCE + LEX_MD_NSUB;         /* ``` + language */
+        int  sub    = isTick ? st - LS_MD_FENCE : 0;
+        char fc     = (st == LS_MD_FENCE_TILDE ||
+                       st == LS_MD_FENCE_LONG_T) ? '~' : '`';
         while (i < n && (s[i] == ' ' || s[i] == '\t')) i++;
         k = i;
         while (k < n && s[k] == fc) k++;
@@ -1465,10 +1499,11 @@ static int lexMarkdownLine(int st, const char *s, int n, char *out)
             while (e < n && lexIsAlnum((unsigned char)s[e])) e++;
             if (e > b) sub = lexMdFenceSub(s + b, e - b);
             lexFill(out, 0, k, LEX_MARKER);
-            lexFill(out, k, n, LEX_TYPE);       /* the language tag */
+            lexFill(out, k, n, LEX_TYPE);       /* the language tag, either way */
             if (k - i >= 4)                     /* no room for a sub-language */
-                return LS_MD_FENCE_LONG + ((fc == '~') ? 1 : 0);
-            return LS_MD_FENCE + ((fc == '~') ? LEX_MD_NSUB : 0) + sub;
+                return (fc == '~') ? LS_MD_FENCE_LONG_T : LS_MD_FENCE_LONG;
+            if (fc == '~') return LS_MD_FENCE_TILDE;   /* ...nor in one of these */
+            return LS_MD_FENCE + sub;
         }
     }
 
@@ -1596,40 +1631,10 @@ static int lexLangFromPath(const char *path)
         if (lexInTable(pasExt, LEX_COUNT(pasExt), d, (int)strlen(d), 1))
             return LEX_LANG_PASCAL;
     }
-    /* Shell and batch: own tables rather than fence aliases. Adding them to
-     * lexMdFenceSub would push LEX_MD_NSUB to 13, and the fence carry states
-     * (LS_MD_FENCE + tilde*NSUB + sub) would then run to 44 and collide with
-     * LS_CF_BLOCK -- see the carry-state comment at the top. */
-    {
-        static const char *const shExt[] = { "bash", "sh" };
-        if (lexInTable(shExt, LEX_COUNT(shExt), d, (int)strlen(d), 1))
-            return LEX_LANG_BASH;
-    }
-    {
-        static const char *const batExt[] = { "bat", "cmd" };
-        if (lexInTable(batExt, LEX_COUNT(batExt), d, (int)strlen(d), 1))
-            return LEX_LANG_BAT;
-    }
-    {   /* .inf is Windows setup, same key=value-with-[sections] shape */
-        static const char *const iniExt[] = { "cfg", "inf", "ini" };
-        if (lexInTable(iniExt, LEX_COUNT(iniExt), d, (int)strlen(d), 1))
-            return LEX_LANG_INI;
-    }
-    {   /* Not a fence tag: ```json would push LEX_MD_NSUB to 12 and run the
-         * fence carry states into LS_CF_BLOCK -- the same wall as ```bash. */
-        static const char *const jsonExt[] = { "json" };
-        if (lexInTable(jsonExt, LEX_COUNT(jsonExt), d, (int)strlen(d), 1))
-            return LEX_LANG_JSON;
-    }
-    {
-        /* .tmx is a Tiled map, .qrc a Qt resource, .csproj / .props MSBuild
-         * -- all XML documents that do not say so in their extension. */
-        static const char *const xmlExt[] = { "csproj", "props", "qrc", "svg",
-                                              "tmx", "xml", "xsd", "xsl", "xslt" };
-        if (lexInTable(xmlExt, LEX_COUNT(xmlExt), d, (int)strlen(d), 1))
-            return LEX_LANG_XML;
-    }
-    /* The other languages share one name table for extensions and fence tags. */
+    /* Everything else shares one name table per language with the fence tags
+     * -- shell, batch, INI, XML and JSON included, now that those are fence
+     * tags too. Pascal (1) and Lua (2) are handled above, by the tables that
+     * do double duty, so only 3 and up can be answered here. */
     {
         int sub = lexMdFenceSub(d, (int)strlen(d));
         if (sub >= 3) return lexMdSubLang[sub];
