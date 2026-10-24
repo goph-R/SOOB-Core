@@ -854,7 +854,7 @@ static int scrDrawBlur(lua_State *L)
  *
  * Key-value store backed by a single file next to the exe. Per-game
  * filename, set by scriptInit's `optFile` arg (e.g. "find5.dat",
- * "sdlfun.dat"). Designed for forward compatibility: each optGet carries
+ * "soob.dat"). Designed for forward compatibility: each optGet carries
  * its own default, so adding / removing / renaming options across
  * versions never breaks an existing save file (orphan keys are quietly
  * ignored, new keys fall back to defaults).
